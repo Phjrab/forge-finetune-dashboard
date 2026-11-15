@@ -73,7 +73,41 @@ const mfNumber=value=>typeof value==='number' && Number.isFinite(value);
 function mfValue(value){return mfKnown(value)?String(value):t('Unknown');}
 function mfBool(value){return t(value===true?'Verified':value===false?'Not verified':'Unknown');}
 function mfSource(run){return t(run.historical===true||run.source==='mediflow_historical'?'Historical reconstruction':run.source==='mediflow_live'?'Live measurement':'Unknown source');}
-function mfName(run){return [run.job_id||run.run_id||run.id,run.attempt_id].filter(Boolean).join(' · ');}
+// Presentation aliases only: routing, exports and source identities stay intact.
+function mfCampaignName(id){
+  if(/^v6-forge-recorded-\d{8}T\d{6}Z$/.test(id||''))return `${t('V6 fresh training')} · ${id.slice(18,22)}-${id.slice(22,24)}-${id.slice(24,26)} ${id.slice(27,29)}:${id.slice(29,31)} UTC`;
+  if(id==='medvlm-v6-v7-r2-20261114')return t('Previous V6 campaign');
+  if(id==='forge-integration-probes-v1')return t('Integration probes');
+  const version=/^medvlm-(v\d+)$/.exec(id||'');
+  return version?`${version[1].toUpperCase()} · ${t('Historical results')}`:mfValue(id);
+}
+function mfName(run){
+  const job=run.job_id||run.run_id||run.id||'',campaign=run.campaign_id||'';
+  const aliases={qwen3_17b:'Qwen3-1.7B',qwen3_4b:'Qwen3-4B',qwen35_2b:'Qwen3.5-2B',medgemma15_4b:'MedGemma-1.5-4B'};
+  const prefix=Object.keys(aliases).find(key=>job.startsWith(key+'-')||job.startsWith('comparison-'+key+'-'));
+  const model=run.model?run.model.split('/').at(-1):prefix?aliases[prefix]:null;
+  const version=/^v(\d+)-/.exec(job)||/^medvlm-v(\d+)(?:-|$)/.exec(campaign);
+  const first=/^v6-first-seed-([TV]\d+)$/.exec(job);
+  const probe=/^forge-integration-probe-([TV]\d+)-(on|off)-\d{8}$/.exec(job);
+  if(first)return ['V6',first[1],model,t('First-seed training')].filter(Boolean).join(' · ');
+  if(probe)return [t('Integration probe'),probe[1],model,t(probe[2]==='on'?'Telemetry on':'Telemetry off')].filter(Boolean).join(' · ');
+  const labels={base:'Base',tuned:'Tuned',smoke:'Smoke check',full:'Full training',text:'Text',validation:'Validation',validation128:'Validation 128',validation256:'Validation 256',test:'Test',noimage:'No image',vqarad:'VQA-RAD',slake:'SLAKE',common:'Common data',random:'Random data',category:'Category',format:'Format',ko:'Korean',en_v1:'English V1',mix:'Mixed languages',paired:'Paired',comparison:'Comparison',vs:'vs',native:'Native',engineering:'Engineering',report:'Report',additional_seeds:'Additional seeds',family_selection:'Family selection',first_seed_final:'First-seed final',full_dev:'Full dev',validation_caps:'Validation caps'};
+  let condition=job.replace(/^comparison-/,'');
+  if(prefix)condition=condition.slice(prefix.length+1);
+  condition=condition.replace(/^v\d+-/,'').replace(/-v\d+(?=-|$)/g,'').replace(/-\d{8}$/,'').replace(/no-image/g,'noimage');
+  // Unknown identifiers remain readable verbatim rather than being guessed.
+  if(!prefix&&!version)return job;
+  const parts=condition.split('-').filter(part=>part&&!/^(?:v\d+|\d{8})$/.test(part)).map(part=>labels[part]?t(labels[part]):/^t\d+$/i.test(part)?part.toUpperCase():part);
+  if(job.startsWith('comparison-')&&!parts.includes(t('Comparison')))parts.unshift(t('Comparison'));
+  if(!parts.length)parts.push(t('Recorded run'));
+  return [version?'V'+version[1]:null,model,...parts].filter(Boolean).join(' · ');
+}
+function mfRunContext(run){
+  const created=run.created_at||mediflow.cache.get(run.id)?.detail?.manifest?.created_at;
+  const stamp=created||run.last_emitted_at;
+  const time=stamp&&Number.isFinite(Date.parse(stamp))?`${t(created?'Recorded at':'Last emitted')}: ${new Date(stamp).toLocaleString()}`:t('Original time unavailable');
+  return `${mfCampaignName(run.campaign_id)} · ${time}`;
+}
 function mfKind(run){return run.task==='vqa'?'VLM':run.task==='text'?'LLM':t('Unknown');}
 function mfTime(value){return value?escapeHtml(value):t('Original time unavailable');}
 function mfReason(record,key){return record?.availability?.[key]?.reason||t('Not measured');}
@@ -122,9 +156,9 @@ function renderMediflow(){
   const shown=campaignRuns.filter(run=>filter==='all'||mfKind(run)===filter);
   $('#experiment-count').textContent=shown.length;
   $('#no-runs').textContent=t('No experiments in this view yet');$('#no-runs').hidden=shown.length>0;
-  $('#runs-body').innerHTML=shown.map(run=>{const progress=mfNumber(run.optimizer_step)&&mfNumber(run.total_updates)&&run.total_updates>0?pct(run.optimizer_step/run.total_updates*100):null;return `<tr tabindex="0" data-run="${escapeHtml(run.id)}" class="${run.id===selectedId?'selected':''}" aria-label="${escapeHtml(t('Select')+' '+mfName(run))}"><td><div class="run-name"><span class="type-icon">${run.task==='vqa'?'▧':'≋'}</span><div>${escapeHtml(mfName(run))}<div class="run-meta">${escapeHtml(mfSource(run))} · ${escapeHtml(mfKind(run))} · ${escapeHtml(mfValue(run.model))}</div></div></div></td><td><span class="status ${escapeHtml(run.status||'unknown')}">${escapeHtml(t(run.status||'Unknown'))}</span>${run.stale?`<span class="pill">${t('Worker stale')}</span>`:''}<small>${escapeHtml(t(run.phase||'Unknown'))}</small></td><td>${progress===null?'—':`${fmt(progress,0)}%`}<small>${escapeHtml(mfValue(run.optimizer_step))} / ${escapeHtml(mfValue(run.total_updates))}</small></td><td>${fmt(run.train_loss)}</td><td>${escapeHtml(run.campaign_id)}</td><td>↗</td></tr>`;}).join('');
+  $('#runs-body').innerHTML=shown.map(run=>{const progress=mfNumber(run.optimizer_step)&&mfNumber(run.total_updates)&&run.total_updates>0?pct(run.optimizer_step/run.total_updates*100):null;return `<tr tabindex="0" data-run="${escapeHtml(run.id)}" class="${run.id===selectedId?'selected':''}" aria-label="${escapeHtml(t('Select')+' '+mfName(run))}"><td><div class="run-name"><span class="type-icon">${run.task==='vqa'?'▧':'≋'}</span><div>${escapeHtml(mfName(run))}<div class="run-meta">${escapeHtml(mfSource(run))} · ${escapeHtml(mfKind(run))} · ${escapeHtml(mfRunContext(run))}</div></div></div></td><td><span class="status ${escapeHtml(run.status||'unknown')}">${escapeHtml(t(run.status||'Unknown'))}</span>${run.stale?`<span class="pill">${t('Worker stale')}</span>`:''}<small>${escapeHtml(t(run.phase||'Unknown'))}</small></td><td>${progress===null?'—':`${fmt(progress,0)}%`}<small>${escapeHtml(mfValue(run.optimizer_step))} / ${escapeHtml(mfValue(run.total_updates))}</small></td><td>${fmt(run.train_loss)}</td><td>${escapeHtml(mfCampaignName(run.campaign_id))}</td><td>↗</td></tr>`;}).join('');
   $$('#runs-body tr[data-run]').forEach(row=>{row.onclick=()=>{selectRun(row.dataset.run);refresh();};row.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();row.onclick();}};});
-  $('#mobile-run').innerHTML=campaignRuns.map(run=>`<option value="${escapeHtml(run.id)}">${escapeHtml(mfName(run))} · ${escapeHtml(mfSource(run))}</option>`).join('');$('#mobile-run').value=selectedId||'';
+  $('#mobile-run').innerHTML=campaignRuns.map(run=>`<option value="${escapeHtml(run.id)}">${escapeHtml(mfName(run))} · ${escapeHtml(mfSource(run))} · ${escapeHtml(mfRunContext(run))}</option>`).join('');$('#mobile-run').value=selectedId||'';
   $('#mobile-run-label').hidden=advanced;
   if(selected)renderMediflowDetail(selected);
   if(nav==='compare' && $('#compare-output'))updateMediflowComparison();
@@ -139,16 +173,16 @@ function renderMediflowCampaigns(runs){
   if(!host.dataset.mfCampaignLayout){host.innerHTML=`<div class="mf-campaign-toolbar"><label><span id="mf-campaign-label"></span> <select id="mf-campaign-select" aria-label="${t('Campaign')}"></select></label><small id="mf-run-order"></small></div><div class="mf-campaigns" id="mf-campaign-summary"></div>`;host.dataset.mfCampaignLayout='true';}
   const select=$('#mf-campaign-select');
   $('#mf-campaign-label').textContent=t('Campaign');select.setAttribute('aria-label',t('Campaign'));
-  const options=`<option value="">${t('All campaigns')}</option>`+(mediflow.campaigns||[]).map(c=>`<option value="${escapeHtml(c.campaign_id)}">${escapeHtml(c.campaign_id)}</option>`).join('');
+  const options=`<option value="">${t('All campaigns')}</option>`+(mediflow.campaigns||[]).map(c=>`<option value="${escapeHtml(c.campaign_id)}">${escapeHtml(mfCampaignName(c.campaign_id))}</option>`).join('');
   if(select.innerHTML!==options)select.innerHTML=options;
   if(select.value!==mediflowCampaignFilter)select.value=mediflowCampaignFilter;
   select.onchange=()=>{mediflowCampaignFilter=select.value;render();refresh();};
   $('#mf-run-order').textContent=t('Live runs first · historical records with loss first');
-  $('#mf-campaign-summary').innerHTML=(mediflow.campaigns||[]).map(c=>`<div><strong>${escapeHtml(c.campaign_id)}</strong><span>${escapeHtml(mfCampaignSummary(c,runs))}</span><small>${escapeHtml(Object.entries(c.status_counts||{}).map(([key,value])=>`${t(key)}: ${value}`).join(' · '))}</small><small>${escapeHtml([...new Set(runs.filter(run=>run.campaign_id===c.campaign_id&&!['succeeded','failed','unknown'].includes(run.phase)).map(run=>t(run.phase)))].join(' · '))}</small><small>${mfTime(c.last_emitted_at)}</small></div>`).join('')||t('No MediFlow campaigns registered');
+  $('#mf-campaign-summary').innerHTML=(mediflow.campaigns||[]).map(c=>`<div><strong>${escapeHtml(mfCampaignName(c.campaign_id))}</strong><span>${escapeHtml(mfCampaignSummary(c,runs))}</span><small>${escapeHtml(Object.entries(c.status_counts||{}).map(([key,value])=>`${t(key)}: ${value}`).join(' · '))}</small><small>${escapeHtml([...new Set(runs.filter(run=>run.campaign_id===c.campaign_id&&!['succeeded','failed','unknown'].includes(run.phase)).map(run=>t(run.phase)))].join(' · '))}</small><small>${mfTime(c.last_emitted_at)}</small></div>`).join('')||t('No MediFlow campaigns registered');
 }
 function renderMediflowDetail(run){
   const entry=mediflow.entry(run.id),detail=entry.detail||{},status=detail.status||{},summary=detail.summary||{},steps=entry.streams.steps.items,last=steps.at(-1)||{},resources=entry.streams.resources.items,resource=resources.at(-1)||{};
-  $('#selected-title').textContent=mfName(run);$('#selected-subtitle').textContent=[mfValue(run.model),mfValue(run.task),t('Seed')+' '+mfValue(run.seed),mfValue(run.campaign_id)].join(' · ');
+  $('#selected-title').textContent=mfName(run);$('#selected-subtitle').textContent=[mfValue(run.model),mfValue(run.task),t('Seed')+' '+mfValue(run.seed),mfRunContext(run)].join(' · ');
   $('#run-source').textContent=mfSource(run);$('#run-source').className='pill real';$('#run-state').textContent=t(run.status||'Unknown')+' · '+t(run.phase||'Unknown');$('#run-state').className='status '+(run.status||'unknown');
   $('#run-observed').textContent=`${t(run.stale?'Worker stale':'Last emitted')}: ${run.last_emitted_at||t('Original time unavailable')} · ${t('Observed')}: ${run.observed_at||t('Unknown')}`;
   $('.data-badge').textContent=mfSource(run);$('#train-loss').textContent=fmt(run.train_loss);$('#eval-loss').textContent=t('Not run');$('#learning-rate').textContent=mfNumber(last.lr_used)?last.lr_used.toExponential(2):'—';
@@ -168,7 +202,7 @@ function renderMediflowDetail(run){
   else if(currentTab==='evaluation')$('#tab-content').innerHTML=renderMediflowEvaluations(entry.evaluations);
   else if(currentTab==='checkpoints')$('#tab-content').innerHTML=`<h4>${t('Artifact evidence')}</h4>${(detail.artifacts||[]).map(a=>`<div class="feature-box"><strong>${escapeHtml(a.artifact_id)}</strong>${mfRows([['Kind',a.kind],['Selection',a.selection],['Exists',mfBool(a.exists)],['Verified',mfBool(a.verified)],['Fresh reload succeeded',mfBool(a.reload_verified)],['SHA256',a.sha256]])}</div>`).join('')||`<div class="empty">${t('No checkpoint evidence')}</div>`}`;
   else if(currentTab==='configuration')$('#tab-content').innerHTML=mfRows(Object.entries(detail.manifest||run).filter(([,value])=>value===null||typeof value!=='object'));
-  else $('#tab-content').innerHTML=`<div class="log-view" aria-label="${t('Durable events')}">${entry.streams.events.items.map(event=>`<div class="log-line"><span class="log-time">${mfTime(event.emitted_at)}</span><span>${escapeHtml(event.event)}</span><span class="log-message">${escapeHtml(event.message||'')} · ${escapeHtml(event.attempt_id||run.attempt_id)} · #${escapeHtml(event.seq)} · ${escapeHtml(event.provenance||'')}</span></div>`).join('')||t('No durable events yet')}</div>`;
+  else $('#tab-content').innerHTML=`<div class="log-view" aria-label="${t('Durable events')}">${entry.streams.events.items.map(event=>`<div class="log-line"><span class="log-time">${mfTime(event.emitted_at)}</span><span>${escapeHtml(event.event)}</span><span class="log-message">${escapeHtml(event.message||'')} · #${escapeHtml(event.seq)} · ${escapeHtml(event.provenance||'')}</span></div>`).join('')||t('No durable events yet')}</div>`;
   fitChartTypography();
 }
 function renderMediflowResources(resources,last,summary){
@@ -188,7 +222,7 @@ function renderMediflowEvaluations(evaluations){
 }
 function mfAggregateTable(metrics){return `<div class="runs-scroll"><table><tbody>${Object.entries(metrics||{}).map(([key,value])=>`<tr><th>${escapeHtml(key)}</th><td class="technical-value">${escapeHtml(value===null?t('Unknown'):typeof value==='object'?JSON.stringify(value):value)}</td></tr>`).join('')}</tbody></table></div>`;}
 function renderMediflowCompare(){
-  const runs=mediflow.runs,options=runs.map(run=>`<option value="${escapeHtml(run.id)}">${escapeHtml(mfName(run))}</option>`).join('');
+  const runs=mediflow.runs,options=runs.map(run=>`<option value="${escapeHtml(run.id)}">${escapeHtml(mfName(run))} · ${escapeHtml(mfRunContext(run))}</option>`).join('');
   $('#workspace-view').innerHTML=featureHeading('compare',t('Compare only matching known evaluation cohorts. Training loss is not clinical quality.'))+`<div class="compare-selects"><label>${t('Experiment A')}<select id="compare-a">${options}</select></label><label>${t('Experiment B')}<select id="compare-b">${options}</select></label></div><div id="compare-output"></div>`;
   $('#compare-a').value=selectedId||runs[0]?.id||'';$('#compare-b').value=runs.find(run=>run.id!==$('#compare-a').value)?.id||'';
   for(const selector of ['#compare-a','#compare-b'])$(selector).onchange=()=>{updateMediflowComparison();refresh();};updateMediflowComparison();refresh();
@@ -197,7 +231,7 @@ function updateMediflowComparison(){
   const a=mediflow.runs.find(run=>run.id===$('#compare-a')?.value),b=mediflow.runs.find(run=>run.id===$('#compare-b')?.value);if(!a||!b){$('#compare-output').innerHTML=`<div class="empty">${t('Select two registered runs')}</div>`;return;}
   const ea=mediflow.entry(a.id).evaluations,eb=mediflow.entry(b.id).evaluations;
   const pairs=ea.flatMap(left=>eb.map(right=>({left,right,state:mfComparability(left,right)})));
-  $('#compare-output').innerHTML=`<p>${t('Compare only matching known evaluation cohorts. Training loss is not clinical quality.')}</p>${pairs.map(pair=>`<p class="pill">${escapeHtml(pair.left.evaluation_id)} / ${escapeHtml(pair.right.evaluation_id)} · ${t(pair.state)}</p>`).join('')||`<p>${t('Comparison identity unknown')}</p>`}<div class="feature-grid">${[a,b].map(run=>`<section class="feature-box"><h3>${escapeHtml(mfName(run))}</h3><p>${mfSource(run)}</p><div class="chart mf-chart">${mfChart(mfSteps(run.id),'train_loss','Train loss','optimizer_step')}</div>${renderMediflowEvaluations(mediflow.entry(run.id).evaluations)}<div class="feature-actions">${mfExport(run.id)}</div></section>`).join('')}</div>`;
+  $('#compare-output').innerHTML=`<p>${t('Compare only matching known evaluation cohorts. Training loss is not clinical quality.')}</p>${pairs.map(pair=>`<p class="pill">${escapeHtml(pair.left.evaluation_id)} / ${escapeHtml(pair.right.evaluation_id)} · ${t(pair.state)}</p>`).join('')||`<p>${t('Comparison identity unknown')}</p>`}<div class="feature-grid">${[a,b].map(run=>`<section class="feature-box"><h3>${escapeHtml(mfName(run))}</h3><p>${mfSource(run)} · ${escapeHtml(mfRunContext(run))}</p><div class="chart mf-chart">${mfChart(mfSteps(run.id),'train_loss','Train loss','optimizer_step')}</div>${renderMediflowEvaluations(mediflow.entry(run.id).evaluations)}<div class="feature-actions">${mfExport(run.id)}</div></section>`).join('')}</div>`;
 }
 async function loadMediflowView(view){
   if(view==='compare'){renderMediflowCompare();return;}
