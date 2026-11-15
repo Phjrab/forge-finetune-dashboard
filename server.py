@@ -72,7 +72,9 @@ class DashboardServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self, address, simulator: Simulator, static_dir: Path, *, auth=None,
-                 workspace=None, training=None, lan=False, allowed_hosts=(), tls_context=None, allow_insecure_http=False):
+                 workspace=None, training=None, mediflow=None, lan=False, allowed_hosts=(), tls_context=None, allow_insecure_http=False):
+        if mediflow is not None and training is not None:
+            raise ValueError("Mediflow mode cannot own a Forge training manager.")
         validate_bind(address[0], lan)
         self.listener_lan = address[0] not in LOOPBACK_HOSTS
         if self.listener_lan and auth is False:
@@ -99,6 +101,7 @@ class DashboardServer(ThreadingHTTPServer):
         self.auth = AuthStore(db_dir / "auth.sqlite3") if auth is None else auth
         self.workspace = workspace if workspace is not None else Workspace(db_dir / "workspace.sqlite3", workspace_path=Path(__file__).resolve().parent)
         self.training = training
+        self.mediflow = mediflow
         self.huggingface = HuggingFaceHub(db_dir / "huggingface")
         self.model_downloads = None
         self._resources_closed = False
@@ -114,6 +117,8 @@ class DashboardServer(ThreadingHTTPServer):
             raise
 
     def start_worker(self):
+        if self.mediflow is not None:
+            return  # The external Mediflow owner is the only execution authority.
         if self.worker_thread is not None:
             return
         def work():
@@ -130,6 +135,8 @@ class DashboardServer(ThreadingHTTPServer):
 
     def server_close(self):
         self.stop_event.set()
+        if self.mediflow is not None and not self._resources_closed:
+            self.mediflow.close()  # Close only the read-model database, never a worker.
         if self.model_downloads and not self._resources_closed:
             self.model_downloads.close()
         if self.training and not self._resources_closed:
@@ -354,6 +361,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _snapshot(self):
         snapshot = self.server.simulator.snapshot()
         snapshot["settings"] = self._settings()
+        if self.server.mediflow is not None:
+            caps = self.server.mediflow.capabilities()
+            snapshot.update(mode="mediflow", source="external_mediflow", demo=False,
+                            runs=[], active_run_id=None, reserved_run_id=None,
+                            summary={}, health={"status": "ok", "execution_owner": "TRAINING_OWNER"},
+                            model_catalog=[], dataset_catalog=[], mediflow=caps,
+                            training={"available": False, "enabled": False, "models": [],
+                                      "reason": "TRAINING_OWNER controls Mediflow execution."},
+                            capabilities={"real_training": False, "pause": False,
+                                          "downloads": False, "checkpoint_files": False},
+                            gpu={"name": "Mediflow resources", "detected": None, "simulated": False,
+                                 "used_gb": None, "total_gb": None, "utilization": None, "temp_c": None,
+                                 "reason": "Select a Mediflow run for measured resource samples."})
+            return snapshot
         if self.server.worker_error:
             snapshot["health"]["status"] = "degraded"
             snapshot["health"]["message"] = "Demo worker stopped. Restart the local service to resume simulation."
@@ -389,9 +410,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return self.server.model_downloads
 
     def _training(self):
+        if self.server.mediflow is not None:
+            raise DashboardError('mediflow_execution_owned', 'Execution is owned by the Mediflow supervisor.', 409)
         if not self.server.training:
             raise DashboardError('training_unavailable','Real training is disabled on this server.',409)
         return self.server.training
+
+    def _mediflow_get(self, path):
+        if self.server.mediflow is None:
+            raise DashboardError("mediflow_unavailable", "Mediflow backend is not configured.", 409)
+        query = self._query({"offset", "limit", "campaign_id", "after_seq", "stream_epoch", "format"})
+        result = self.server.mediflow.dispatch("GET", path, query=query)
+        if path.endswith("/export"):
+            run_id = path.split("/")[-2]
+            if not re.fullmatch(r"mf-[a-f0-9]{24}", run_id):
+                raise DashboardError("invalid_path", "Invalid Mediflow run ID.")
+            if query.get("format", "json") == "csv":
+                stream = io.StringIO(newline="")
+                writer = csv.writer(stream)
+                writer.writerow(["section", "index", "key", "value"])
+                for section, value in result.items():
+                    for index, row in enumerate(value if isinstance(value, list) else [value]):
+                        for key, cell in (row.items() if isinstance(row, dict) else [("value", row)]):
+                            writer.writerow(["'" + section, index, "'" + str(key),
+                                             "'" + cell if isinstance(cell, str) else json.dumps(cell, ensure_ascii=False, allow_nan=False)])
+                return self._download(stream.getvalue().encode(), run_id + "-mediflow.csv", "text/csv; charset=utf-8")
+            return self._download(json.dumps(result, ensure_ascii=False, allow_nan=False).encode(),
+                                  run_id + "-mediflow.json", "application/json; charset=utf-8")
+        return self._json(200, result)
 
     def _query(self, allowed):
         query = parse_qs(urlsplit(self.path).query, keep_blank_values=True, max_num_fields=8)
@@ -438,6 +484,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return self._json(200, self._auth_status())
             if path.startswith("/api/"):
                 self._authorize(bootstrap=path == "/api/settings")
+                if path.startswith("/api/mediflow/"):
+                    return self._mediflow_get(path)
                 if path == "/api/settings":
                     return self._json(200, self._settings())
                 if path == '/api/huggingface/account':
@@ -558,6 +606,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if path == "/api/settings":
                 self.server.auth.update_settings(payload)
                 return self._json(200, self._settings())
+            if path.startswith("/api/mediflow/"):
+                if self.server.mediflow is None:
+                    raise DashboardError("mediflow_unavailable", "Mediflow backend is not configured.", 409)
+                result = self.server.mediflow.dispatch("POST", path, payload=payload)
+                return self._json(201, result if self._can_view_response() else {"registered": True})
+            if self.server.mediflow is not None:
+                raise DashboardError("mediflow_execution_owned",
+                                     "This profile uses Mediflow. Dataset freeze and execution belong to TRAINING_OWNER.", 409)
             if path == '/api/huggingface/connect':
                 result=self.server.huggingface.connect(payload)
                 return self._json(200,result if self._can_view_response() else {'connected':True})
@@ -652,7 +708,14 @@ def main(argv=None):
     parser.add_argument('--enable-training', action='store_true', help='Enable installed local CUDA LoRA/QLoRA worker.')
     parser.add_argument('--training-root', type=Path, help='Private output/image root, default data/training.')
     parser.add_argument('--model-root', type=Path, help='Operator-staged model snapshots root.')
+    parser.add_argument('--backend', choices=('forge', 'mediflow'), default='forge')
+    parser.add_argument('--mediflow-root', type=Path, help='Operator-approved private telemetry/catalog root (read only).')
+    parser.add_argument('--mediflow-db', type=Path, help='Integration-owned persistent cursor/read-model database.')
     args = parser.parse_args(argv)
+    if args.backend == 'mediflow' and (args.enable_training or not args.mediflow_root):
+        parser.error('Mediflow requires --mediflow-root and forbids --enable-training')
+    if args.backend != 'mediflow' and (args.mediflow_root or args.mediflow_db):
+        parser.error('--mediflow-root/--mediflow-db require --backend mediflow')
     if not 0 <= args.port <= 65535:
         parser.error("--port must be between 0 and 65535")
     if bool(args.tls_cert) != bool(args.tls_key):
@@ -679,12 +742,18 @@ def main(argv=None):
         initial_password = getpass.getpass("Initial admin password (12+ characters): ")
     auth = AuthStore(auth_path, initial_password=initial_password)
     initial_password = None
-    simulator = Simulator(args.db)
+    simulator = Simulator(args.db, seed_demo=args.backend != 'mediflow')
+    bridge = None
+    if args.backend == 'mediflow':
+        from mediflow import MediflowBridge
+        bridge = MediflowBridge(args.mediflow_root, db_path=args.mediflow_db or args.db.parent / 'mediflow.sqlite3')
     try:
-        server = DashboardServer((args.host, args.port), simulator, args.static_dir, auth=auth,
+        server = DashboardServer((args.host, args.port), simulator, args.static_dir, auth=auth, mediflow=bridge,
                                  lan=args.lan, allowed_hosts=args.allowed_host, tls_context=tls_context,
                                  allow_insecure_http=args.allow_insecure_http)
     except Exception:
+        if bridge is not None:
+            bridge.close()
         auth.close()
         simulator.close()
         raise
@@ -697,7 +766,8 @@ def main(argv=None):
     display_host = f"[{args.host}]" if ":" in args.host else args.host
     scheme = "https" if server.tls else "http"
     print(f"Forge Fine-tuning Dashboard: {scheme}://{display_host}:{server.server_port}", flush=True)
-    print("Demo runs are synthetic. Enabled real training runs use local staged models and CUDA. Ctrl+C stops the service.", flush=True)
+    print("Mediflow read-only profile; execution remains with TRAINING_OWNER." if bridge else
+          "Demo runs are synthetic. Enabled real training runs use local staged models and CUDA. Ctrl+C stops the service.", flush=True)
     if auth.bootstrap_required:
         print("LOCAL SETUP REQUIRED: log in as admin on loopback and change the initial password; external LAN is blocked.", flush=True)
     if remote_listener and not server.tls:

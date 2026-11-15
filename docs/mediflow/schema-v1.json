@@ -1,0 +1,360 @@
+{
+  "contract_version": "forge.mediflow.v1",
+  "state": "FROZEN",
+  "schema_version": "mediflow.telemetry.v1",
+  "authority": {
+    "role": "C0",
+    "requested_model": "gpt-6-astra",
+    "effective_model": "gpt-6-astra",
+    "requested_effort": "high",
+    "effective_effort": "high",
+    "evidence": "Accepted explicit spawn configuration; no independent backend attestation claimed."
+  },
+  "bases": {
+    "forge": "d9a4656a5bee38cc9903e8caf5c4b680709423d2",
+    "mediflow": "8eac1ff1fd9fed65d2edfdc527dc4081b3f199f0",
+    "forge_workbench": "All Workbench application source already in main; UI branch only differs in three deployment documentation files."
+  },
+  "ownership": {
+    "C0": [
+      "Forge server.py (final route/auth/mode/CLI integration)",
+      "coordination/schema_contract.json",
+      "coordination/C0_DECISIONS.md",
+      "integration docs and readiness/validation requests"
+    ],
+    "C1": [
+      "Forge mediflow.py",
+      "Forge tests/test_mediflow.py",
+      "Forge docs/mediflow-contract.md",
+      "Forge fixtures under tests/fixtures/mediflow/"
+    ],
+    "C2": [
+      "Mediflow src/mediflow_medvlm/telemetry.py",
+      "Mediflow src/mediflow_medvlm/telemetry_import.py",
+      "Mediflow src/mediflow_medvlm/campaign_main_train.py",
+      "Mediflow tests/test_telemetry.py",
+      "Mediflow tests/test_telemetry_import.py",
+      "Mediflow docs/agent/FORGE_TELEMETRY.md",
+      "Mediflow src/mediflow_medvlm/campaign_gpu_smoke.py",
+      "Mediflow tests/test_telemetry_smoke.py"
+    ],
+    "C3": [
+      "Forge static/index.html",
+      "Forge static/style.css",
+      "Forge static/app.js",
+      "Forge static/i18n.js",
+      "Forge static/mediflow.js",
+      "Forge UI-specific tests"
+    ],
+    "C4": [
+      "Independent review and new narrowly named verification tests only; do not modify owned implementation files without C0 assignment"
+    ]
+  },
+  "mode": {
+    "value": "mediflow",
+    "source": "external_mediflow",
+    "execution_owner": "TRAINING_OWNER",
+    "synthetic": false,
+    "live_transport": "cursor_polling",
+    "poll_interval_ms": 3000,
+    "resource_interval_seconds": 5,
+    "max_flush_seconds": 5,
+    "capabilities": {
+      "read": true,
+      "register_dataset_reference": true,
+      "start": false,
+      "pause": false,
+      "resume": false,
+      "cancel": false,
+      "retry": false,
+      "reason": "Execution is owned by the Mediflow supervisor; partial optimizer/RNG resume is unsupported."
+    }
+  },
+  "storage": {
+    "root": "Operator-configured private telemetry root; never returned in APIs",
+    "attempt_layout": "<root>/<campaign-safe>/<run-safe>/<attempt-safe>/{manifest.json,steps.jsonl,resources.jsonl,events.jsonl,status.json,summary.json,evaluations.json}",
+    "dataset_layout": "<root>/datasets/<safe-id>/manifest.json; optional records.metadata.jsonl",
+    "required_attempt_file": "manifest.json",
+    "writer": "One owner per attempt stream; separate seq per steps/resources/events. Append UTF-8 JSONL. Atomic replacement of JSON snapshots. Do not truncate originals. Default append+flush each update; fsync checkpoint/end and configurable cadence.",
+    "seq": "Positive increasing integer within (campaign_id,run_id,attempt_id,producer,stream); no reuse. A stream has exactly one producer.",
+    "stream_epoch": "Stable SHA256 of attempt identity+stream+producer; bridge additionally detects inode replacement/truncation and requires reset.",
+    "privacy": "No prompts, answers, generated text, images, tokens, secret values or filesystem paths in API records. IDs are logical identifiers, not paths."
+  },
+  "identity": {
+    "api_run_id": "mf- + first 24 lowercase hex characters of SHA256(canonical JSON [campaign_id,job_id,run_id,attempt_id]); API id represents one attempt, preserving original run and attempt IDs.",
+    "canonical_json": "UTF-8 json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(\",\",\":\"))",
+    "nullable": "Absent/unknown scalar is JSON null, never 0. All floats must be finite or normalized null with reason.",
+    "envelope_required": {
+      "schema_version": "mediflow.telemetry.v1",
+      "campaign_id": "string",
+      "job_id": "string",
+      "run_id": "string",
+      "attempt_id": "string",
+      "source": "mediflow_live|mediflow_historical",
+      "producer": "string e.g. mediflow.campaign_main_train or mediflow.telemetry_import",
+      "seq": "integer >=1 per stream",
+      "emitted_at": "UTC ISO8601 or null for historical observation with no original timestamp",
+      "monotonic_ns": "integer|null; null historical",
+      "observed_at": "UTC ISO8601 conversion/read observation time; live may equal emitted_at",
+      "model": "string|null",
+      "task": "text|vqa|other|null",
+      "phase": "loading|training|saving|reloading|evaluating|succeeded|failed|held|recovering|pending|unknown",
+      "provenance": "live_measured|historical_reconstructed|derived",
+      "source_artifact": "null or {artifact_id: logical name, sha256: hex64}; never a private path"
+    },
+    "availability": "Object keyed by missing/derived metric field. Each entry {available:boolean,reason:string|null,provenance:live_measured|historical_reconstructed|derived|unmeasured}. Non-null inherited envelope provenance is default for measured fields."
+  },
+  "manifest": {
+    "fields": {
+      "schema_version": "mediflow.telemetry.v1",
+      "campaign_id": "string",
+      "job_id": "string",
+      "run_id": "string",
+      "attempt_id": "string",
+      "source": "mediflow_live|mediflow_historical",
+      "producer": "string",
+      "model": "string|null",
+      "task": "string|null",
+      "seed": "integer|null",
+      "data_hash": "hex64|null",
+      "scientific_recipe_hash": "hex64|null",
+      "code_sha": "git SHA|null",
+      "telemetry_version": "mediflow.telemetry.v1",
+      "eval_protocol": "string|null",
+      "precision": "string|null",
+      "parent_run_id": "string|null",
+      "freeze_id": "string|null",
+      "dataset_ids": "array of logical dataset IDs",
+      "total_updates": "integer|null",
+      "samples_total": "integer|null",
+      "created_at": "UTC ISO8601|null",
+      "historical": "boolean",
+      "artifacts": "array of sanitized {artifact_id,kind,sha256,exists,verified,reload_verified,selection}; no paths",
+      "source_artifacts": "array of {artifact_id,sha256}",
+      "cohort_id": "string|null"
+    }
+  },
+  "step": {
+    "fields": {
+      "optimizer_step": "integer >=1",
+      "total_updates": "integer|null",
+      "batch_examples": "integer >0",
+      "samples_processed": "integer cumulative",
+      "samples_total": "integer|null",
+      "train_loss": "number|null; arithmetic mean of already computed per-example target-token-mean losses in this actual update",
+      "loss_objective": "example_mean_of_target_token_mean",
+      "lr_used": "number|null",
+      "lr_next": "number|null",
+      "gradient_norm_before_clip": "number|null",
+      "supervised_tokens": "integer|null; update count",
+      "supervised_tokens_cumulative": "integer|null",
+      "sequence_tokens": "integer|null; update count",
+      "sequence_tokens_cumulative": "integer|null",
+      "step_wall_seconds": "number|null",
+      "step_time_scope": "update_host_wall_no_extra_cuda_sync|null",
+      "samples_per_second": "number|null; derived batch_examples/step_wall_seconds",
+      "supervised_tokens_per_second": "number|null; derived supervised_tokens/step_wall_seconds",
+      "sequence_tokens_per_second": "number|null; derived sequence_tokens/step_wall_seconds",
+      "cuda_allocated_bytes": "integer|null; current process torch allocator",
+      "cuda_reserved_bytes": "integer|null",
+      "cuda_peak_allocated_bytes": "integer|null",
+      "cuda_peak_reserved_bytes": "integer|null",
+      "finite": "boolean|null",
+      "availability": "object"
+    },
+    "prohibited": "No new forward/backward, RNG draw, sample-order change, optimizer/scheduler change, per-update synchronize or re-computation of loss."
+  },
+  "resource": {
+    "fields": {
+      "sample_interval_seconds": "number|null",
+      "sample_gap_seconds": "number|null",
+      "attribution": "device_shared|process|unavailable",
+      "gpu_uuid": "string|null",
+      "gpu_index": "integer|null",
+      "process_id": "integer|null",
+      "gpu_utilization_percent": "number|null",
+      "gpu_memory_used_bytes": "integer|null; whole device",
+      "gpu_memory_total_bytes": "integer|null",
+      "gpu_temperature_celsius": "number|null",
+      "gpu_power_watts": "number|null",
+      "gpu_sm_clock_mhz": "number|null",
+      "gpu_memory_clock_mhz": "number|null",
+      "cpu_percent": "number|null",
+      "host_ram_used_bytes": "integer|null",
+      "host_ram_total_bytes": "integer|null",
+      "process_rss_bytes": "integer|null",
+      "tool_status": "ok|unavailable|error|backoff",
+      "availability": "object"
+    },
+    "policy": "Read NVML/nvidia-smi/proc without initializing CUDA. Failures remain null with reasons and backoff. No historical time-series invention. Energy optional derived only with explicit measured interval/coverage."
+  },
+  "event": {
+    "fields": {
+      "event": "model_loading|training_started|optimizer_update|checkpoint_saved|reload_started|reload_succeeded|evaluation_started|evaluation_completed|succeeded|failed|recovery|hold|telemetry_gap|telemetry_error",
+      "message": "Sanitized bounded text or null; default fixed safe message",
+      "optimizer_step": "integer|null",
+      "details": "Allowlisted scalar metadata only; no traceback, raw arbitrary dict, private paths or model output"
+    }
+  },
+  "status": {
+    "fields": {
+      "schema_version": "mediflow.telemetry.v1",
+      "status": "pending|running|held|succeeded|failed|unknown",
+      "phase": "same phase enum as envelope",
+      "optimizer_step": "integer|null",
+      "total_updates": "integer|null",
+      "samples_processed": "integer|null",
+      "samples_total": "integer|null",
+      "last_emitted_at": "UTC ISO8601|null",
+      "training_succeeded": "boolean|null",
+      "reload_succeeded": "boolean|null",
+      "evaluation_completed": "boolean|null",
+      "telemetry_complete": "boolean|null",
+      "telemetry_error": "sanitized reason|null",
+      "dropped_records": "integer",
+      "gaps": "array of {stream,from_seq,to_seq,reason}",
+      "writer_health": "ok|degraded|failed|unknown"
+    }
+  },
+  "summary": {
+    "fields": {
+      "train_loss_mean": "number|null; example weighted whole-run objective",
+      "optimizer_steps": "integer|null",
+      "samples_processed": "integer|null",
+      "supervised_tokens": "integer|null",
+      "sequence_tokens": "integer|null",
+      "wall_seconds": "number|null",
+      "wall_time_scope": "model_load_audit_training_verify_save_and_final_sync|legacy_attempt_wall|unknown",
+      "peak_allocated_bytes": "integer|null",
+      "peak_reserved_bytes": "integer|null",
+      "reconciliation": "{status:passed|failed|unavailable,checks:object}",
+      "telemetry_complete": "boolean|null"
+    },
+    "note": "Do not turn total wall_seconds into step durations or pure training time."
+  },
+  "evaluation": {
+    "file": "evaluations.json is {evaluations:[records]}; absence means not run",
+    "fields": {
+      "evaluation_id": "logical string",
+      "run_id": "original logical run ID",
+      "variant": "base|tuned",
+      "dataset_id": "string|null",
+      "source_id": "string|null",
+      "language": "string|null",
+      "task": "string|null",
+      "split": "train|validation|test|null",
+      "protocol": "string|null",
+      "protocol_version": "string|null",
+      "data_hash": "string|null",
+      "model": "string|null",
+      "precision": "string|null",
+      "cohort_id": "string|null",
+      "status": "not_run|partial|final|failed",
+      "scheduled": "integer|null",
+      "attempted": "integer|null",
+      "valid": "integer|null",
+      "invalid": "integer|null",
+      "failed": "integer|null",
+      "unattempted": "integer|null",
+      "metrics": "Original evaluator aggregate metrics object, sanitized allowlist; names unchanged",
+      "subgroups": "array of OPEN/CLOSED, modality or image-ablation aggregate records; preserve original labels",
+      "provenance": "historical_reconstructed|live_measured",
+      "source_artifact": "{artifact_id,sha256}|null",
+      "receipt_verified": "boolean|null"
+    },
+    "metric_names": [
+      "coverage",
+      "answered_accuracy",
+      "end_to_end_correct_fraction",
+      "answered_lexical_exact_match",
+      "end_to_end_lexical_exact_match",
+      "lexical_token_f1",
+      "macro_f1",
+      "e2e_latency_seconds"
+    ],
+    "comparison": "Only compare matching non-null data_hash, protocol, protocol_version, precision, model/task cohort and split. Missing identity makes comparability unknown, not equal. Keep evaluator denominators; never calculate clinical accuracy."
+  },
+  "dataset": {
+    "registration": "Admin-approved immutable reference manifest; HTTP does not accept filesystem paths. Catalog enumerated by bridge from configured root/datasets. POST accepts only manifest_id. Original canonical records remain Mediflow-owned.",
+    "manifest_fields": {
+      "schema_version": "mediflow.dataset-reference.v1",
+      "dataset_id": "safe logical ID",
+      "name": "string",
+      "freeze_id": "string|null",
+      "data_hash": "hex64",
+      "record_count": "integer",
+      "split_counts": "object train/validation/test counts",
+      "sources": "array of {source_id,source_revision,license_ref,restrictions}",
+      "source_artifacts": "array of {artifact_id,sha256}",
+      "frozen": "true",
+      "status": "registered|verified",
+      "metadata_index": "null or fixed literal records.metadata.jsonl",
+      "metadata_sha256": "hex64|null",
+      "provenance_preserved": "true"
+    },
+    "metadata_row_fields": [
+      "sample_id",
+      "source_id",
+      "source_revision",
+      "group_ids",
+      "split",
+      "task_type",
+      "language",
+      "image_sha256",
+      "license_ref",
+      "restrictions",
+      "derivation",
+      "review_status",
+      "freeze_id"
+    ],
+    "rules": "No canonical transformation, resplit or native image preprocessing. Retain original medvlm.dataset.v1 source references and hashes. No raw input/supervision fields in HTTP. Paginate metadata index using persisted offset index; do not rescan full raw dataset on each summary/request. Reference registration can expose count/hash without an index. No artificial 1000-row/128KiB limit; metadata page remains bounded."
+  },
+  "api": {
+    "prefix": "/api/mediflow",
+    "auth": "Existing Forge _authorize; GET remote_view gate; POST session+CSRF+remote_control. No anonymous bypass.",
+    "service": "C1 implements mediflow.MediflowBridge(root, db_path=None), refresh(), snapshot(), capabilities(), dispatch(method,path,query=None,payload=None), close(). root is trusted Path; db_path optional bridge SQLite path outside source records. refresh() idempotently ingests bounded incremental records and returns health object; dispatch() calls refresh as needed. snapshot() returns {mode:\"mediflow\",source:\"external_mediflow\",capabilities:capabilities(),campaigns:[],runs:[]} with the exact API run_record shape for root assembly (do not masquerade as legacy run types). dispatch receives full path and query dict[str,str] and returns JSON object. Raise existing Forge DashboardError with status. C0 owns HTTP/auth/routes/CLI and response status. close() closes bridge resources only, never signals workers.",
+    "limits": {
+      "default_page_size": 100,
+      "max_page_size": 500,
+      "max_stream_page_size": 1000,
+      "default_stream_page_size": 500,
+      "max_log_message_chars": 500
+    },
+    "endpoints": {
+      "GET /health": "{schema_version,mode,source,capabilities,connected,last_ingested_at,stale_after_seconds,errors:[sanitized code]}",
+      "GET /campaigns?offset=0&limit=100": "{campaigns:[{campaign_id,run_count,status_counts,first_seed_completed,first_seed_expected:10,last_emitted_at}],offset,limit,total,has_more}",
+      "GET /runs?campaign_id=...&offset=0&limit=100": "{runs:[run_record],offset,limit,total,has_more}",
+      "GET /runs/<id>": "{run:run_record,manifest:manifest,status:status,summary:summary|null,artifacts:[]}",
+      "GET /runs/<id>/steps?after_seq=0&limit=500&stream_epoch=...": "stream_page",
+      "GET /runs/<id>/resources?after_seq=0&limit=500&stream_epoch=...": "stream_page",
+      "GET /runs/<id>/events?after_seq=0&limit=500&stream_epoch=...": "stream_page",
+      "GET /runs/<id>/evaluations": "{evaluations:[]}",
+      "GET /runs/<id>/export?format=json|csv": "JSON object for json; C1 export_rows(id) optional for C0 csv response. Export aggregate metrics only, no raw data.",
+      "GET /datasets?offset=0&limit=100": "{datasets:[dataset_manifest],offset,limit,total,has_more}",
+      "POST /datasets/register": "payload {manifest_id:logical dataset ID}; response {dataset:dataset_manifest,registered:true}; C0 HTTP 201",
+      "GET /datasets/<id>/records?offset=0&limit=100": "{records:[metadata_only_rows],offset,limit,total,has_more,availability:{available,reason}}"
+    },
+    "run_record": "{id,campaign_id,job_id,run_id,attempt_id,source,model,task,seed,status,phase,historical,optimizer_step,total_updates,samples_processed,samples_total,train_loss,last_emitted_at,observed_at,stale,telemetry_complete,training_succeeded,reload_succeeded,evaluation_completed,data_hash,scientific_recipe_hash,code_sha,eval_protocol,precision,cohort_id}. Unknown values null. last train_loss is last step, not cumulative mean.",
+    "stream_page": "{items:[],next_after_seq:int,has_more:bool,stream_epoch:string,telemetry_complete:bool|null}; seq means original stream sequence, not shared across streams. All records one attempt/producer.",
+    "cursor_policy": "Client keeps separate cursor+epoch for steps/resources/events, requests after_seq strictly greater, dedupes by (id,stream_epoch,seq). Partial trailing line withheld, raw never truncated. Bridge persists file offsets/dedupe in separate SQLite DB. Inode rotation/truncation or incompatible epoch yields DashboardError mediflow_cursor_reset HTTP409; UI clears affected chart/cursor and reloads. Duplicate same seq/content ignored; conflicting seq/content recorded as integrity error, never silently overwrite.",
+    "staleness": "stale means running stream has no new observed activity beyond threshold, not failed. Browser disconnected distinct from stale. Terminal historical runs are not stale for lack of new telemetry.",
+    "errors": "Standard Forge DashboardError envelope; ids restricted to mf-[a-f0-9]{24}, dataset/catalog IDs [A-Za-z0-9_-]{1,100}. No ID-to-filesystem interpolation. Resolve containment and reject symlink escape on all manifest/index files."
+  },
+  "historical_mapping": {
+    "v6": "Reconstruct from train.metrics.json or metrics.json with config identity and verified source hash. Validate len(example_losses)==sum(update_example_counts), each count positive, number counts==optimizer_steps; never force divisor16. Boundaries are cumulative actual counts. train_loss=sum(losses[start:end])/count; batch_examples=count; samples_processed=end. learning_rates[i] -> lr_used; next entry or final_learning_rate -> lr_next. gradient_norms_before_clip[i] -> gradient_norm_before_clip. example_supervised_tokens sliced by same boundaries; cumulative sums exact. sequence_tokens only total if no per-example records available; step sequence_tokens null with reason. Historical peak CUDA belongs summary, never copied as each step allocated memory. Missing dates/durations/resource series stay null.",
+    "v6_invariants": "Text7997=499*16+13 =>500updates; VQA1979=123*16+11 =>124updates. Whole-run loss is weighted by batch_examples, not unweighted mean of step means.",
+    "legacy_events": "training/runner.py optimizer_update event: step->optimizer_step, loss->train_loss, samples->batch_examples, gradient_norm->gradient_norm_before_clip, target_tokens->supervised_tokens, seconds->step_wall_seconds with documented legacy update host-wall scope. IMPORTANT lr is AFTER scheduler.step(), so map to lr_next, leave lr_used null unless authoritative previous/config evidence proves it. append_event timestamp may be used if present, otherwise null.",
+    "artifact_proof": "Hash original bytes without mutation. Supplied receipt hash must match or reject import. If no external receipt expected hash exists, record computed hash but receipt_verified=null; do not claim independent verification. Import should be idempotent by source hash+logical identity; historical output in separate integration-owned root.",
+    "evaluation": "Adapter preserves evaluation/metrics.py aggregate names and denominators, subgroup metrics and source receipt; no scoring/parser changes."
+  },
+  "acceptance": {
+    "candidate": "CPU contract/security/history/UI tests and exact source commits; pending GPU validation explicit.",
+    "release": "TRAINING_OWNER text and VLM real probes, two distinct measured steps/losses each in browser, refresh preservation, separate save/reload/eval evidence, source hash reconciliation, measured latency and telemetry on/off overhead. Only C0 issues ready; do not mark GPU/browser success from fixtures."
+  },
+  "probe_design": {
+    "owner": "TRAINING_OWNER exclusively",
+    "path": "Existing campaign_gpu_smoke.py 20-update native T1 text and V1 VLM path, instrumented with same writer; sequential under unchanged real GPU lease. Do not create new trainer or relax smoke identity checks.",
+    "preparation": "C2 may prepare immutable configs CPU-only using existing build_config and pinned candidate source files/hash, original model/data freeze and original data root lock. source_files must include telemetry.py so source hash covers actual instrumentation. Owner validates launch/lease and executes.",
+    "requested_evidence": "Per probe at least two distinct measured optimizer steps and losses, saved checkpoint and fresh reload receipt, bridge/browser arrival and refresh, process/cgroup independence; on/off overhead CPU first then owner GPU if feasible. No 500-update full run needed for candidate probe."
+  }
+}
