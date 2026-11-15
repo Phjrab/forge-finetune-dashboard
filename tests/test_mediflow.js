@@ -14,7 +14,7 @@ const step=(seq,value)=>({seq,optimizer_step:seq,train_loss:value,lr_used:null,p
     if(path==='/api/mediflow/health')return {connected:true};
     if(path.startsWith('/api/mediflow/campaigns?'))return {campaigns:[{campaign_id:'old'}],has_more:false};
     if(path.startsWith('/api/mediflow/runs?'))return {runs:[row],has_more:false};
-    if(path.endsWith('/evaluations'))return {evaluations:[]};
+    if(path.includes('/evaluations?'))return {evaluations:[]};
     if(path===`/api/mediflow/runs/${id}`)return {run:row,status:{},summary:null,artifacts:[]};
     const name=path.split('/').at(-1).split('?')[0],query=new URLSearchParams(path.split('?')[1]);
     if(name==='resources')resourceReads++;
@@ -34,7 +34,9 @@ const step=(seq,value)=>({seq,optimizer_step:seq,train_loss:value,lr_used:null,p
   let pages=0;const paginated=new Client(async()=>++pages===1?{runs:[row],has_more:true,limit:500}:{runs:[{...row,id:id2}],has_more:false});assert.equal((await paginated.list('/api/mediflow/runs','runs')).length,2);
   const catchup=new Client(async path=>{const after=Number(new URLSearchParams(path.split('?')[1]).get('after_seq'));const end=Math.min(1200,after+500);return {items:Array.from({length:end-after},(_,index)=>step(after+index+1,1)),next_after_seq:end,stream_epoch:'many',has_more:end<1200};});
   await catchup.stream(id,'steps');assert.equal(catchup.entry(id).streams.steps.items.length,1200);assert.equal(catchup.entry(id).streams.steps.cursor,1200);
-  const expired=new Client(async path=>{if(path.endsWith('/evaluations'))throw Object.assign(new Error('expired'),{status:401});return {items:[],next_after_seq:0,stream_epoch:'empty',has_more:false};});await assert.rejects(expired.hydrate(id),error=>error.status===401);
+  const expired=new Client(async path=>{if(path.includes('/evaluations?'))throw Object.assign(new Error('expired'),{status:401});return {items:[],next_after_seq:0,stream_epoch:'empty',has_more:false};});await assert.rejects(expired.hydrate(id),error=>error.status===401);
+  const evalPages=new Client(async path=>{if(path.includes('/evaluations?')){const offset=Number(new URLSearchParams(path.split('?')[1]).get('offset'));return {evaluations:Array.from({length:Math.min(500,620-offset)},(_,i)=>({evaluation_id:String(offset+i)})),offset,limit:500,total:620,has_more:offset+500<620};}return {items:[],next_after_seq:0,stream_epoch:'empty',has_more:false};});
+  await evalPages.hydrate(id);assert.equal(evalPages.entry(id).evaluations.length,620);assert.equal(evalPages.entry(id).evaluations.at(-1).evaluation_id,'619');
   // Use the production application and actual DOM branches with a minimal stub.
   class Element{constructor(dataset={}){this.dataset=dataset;this.innerHTML='';this.textContent='';this.hidden=false;this.style={};this.value='';this.attributes={};this.classList={toggle(){}};}addEventListener(){}setAttribute(k,v){this.attributes[k]=v;}showModal(){}close(){}focus(){}scrollIntoView(){}querySelectorAll(){return [];}querySelector(){return null;}}
   const nodes=new Map(),get=s=>{if(!nodes.has(s))nodes.set(s,new Element());return nodes.get(s);};

@@ -41,7 +41,7 @@ class MediflowClient {
   }
   async hydrate(id) {
     const entry=this.entry(id);entry.errors=[];
-    const tasks=[['detail',()=>this.request(`/api/mediflow/runs/${encodeURIComponent(id)}`).then(value=>{entry.detail=value;})],['evaluations',()=>this.request(`/api/mediflow/runs/${encodeURIComponent(id)}/evaluations`).then(value=>{entry.evaluations=value.evaluations||[];})],...['steps','resources','events'].map(name=>[name,()=>this.stream(id,name)])];
+    const tasks=[['detail',()=>this.request(`/api/mediflow/runs/${encodeURIComponent(id)}`).then(value=>{entry.detail=value;})],['evaluations',()=>this.list(`/api/mediflow/runs/${encodeURIComponent(id)}/evaluations`,'evaluations').then(value=>{entry.evaluations=value;})],...['steps','resources','events'].map(name=>[name,()=>this.stream(id,name)])];
     const results=await Promise.allSettled(tasks.map(([,task])=>task()));
     results.forEach((result,index)=>{if(result.status==='rejected')entry.errors.push({stream:tasks[index][0],message:result.reason.message});});
     const authorization=results.find(result=>result.status==='rejected'&&result.reason.status===401);if(authorization)throw authorization.reason;
