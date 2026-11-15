@@ -43,6 +43,7 @@ async function uploadDatasetImages(datasetId, files) {
   toast(t('Dataset images uploaded'));
 }
 function renderTrainingSource() {
+  if(typeof isMediflow==='function' && isMediflow())return renderMediflowSource();
   const enabled=Boolean(snapshot?.training?.available), gpu=snapshot?.gpu||{};
   const measuredSource=gpu.simulated===false;
   const measured=measuredSource && gpu.source!=='measurement_unavailable' && [gpu.used_gb,gpu.total_gb,gpu.utilization,gpu.temp_c].some(Number.isFinite), synthetic=gpu.simulated===true, fixture=Boolean(snapshot?.ui_fixture);

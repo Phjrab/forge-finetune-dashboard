@@ -12,6 +12,7 @@ let snapshot = null, selectedId = null, filter = 'all', currentTab = 'logs', req
 try { selectedId = localStorage.getItem('forge.selectedRun'); } catch {}
 function toast(message, error = false) { const el = $('#toast'); el.textContent = t(message); el.hidden = false; el.classList.toggle('error', error); clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, 4200); }
 async function api(path, body) {
+  if(body!==undefined && typeof isMediflow==='function' && isMediflow() && !path.startsWith('/api/auth/') && !path.startsWith('/api/settings') && path!=='/api/mediflow/datasets/register') throw new Error(t('Execution controls unavailable'));
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), path.startsWith('/api/huggingface/') ? 45000 : 8000);
   try {
@@ -27,8 +28,8 @@ async function api(path, body) {
 function setConnection(ok) { connectionLabel = ok ? 'Dashboard API online' : 'API offline · data stale'; const el = $('#connection'); el.className = 'connection ' + (ok ? 'ok' : 'error'); el.innerHTML = `<i></i> ${ok ? t("Dashboard API online") : t("API offline · data stale")}`; }
 async function refresh() {
   if (refreshBusy) return; refreshBusy = true;
-  try { snapshot = await api('/api/status'); setConnection(true); render(); }
-  catch(error) { setConnection(false); if(error.status === 401) { snapshot=null; clearRunSurfaces(); } if(error.status === 401 || error.code === 'bootstrap_required' || error.code === 'password_change_required') { connectionLabel = 'Local sign-in required'; $('#connection').innerHTML=`<i></i> ${t("Local sign-in required")}`; if(typeof checkAccess === 'function') checkAccess(); } if (!snapshot) { $('#runs-body').innerHTML = `<tr><td colspan="6" class="empty">${t("Sign in locally to finish setup, or check that python server.py is running.")}</td></tr>`; $('#selected-title').textContent = t("Waiting for the local demo API"); } }
+  try { const incoming = await api('/api/status'); snapshot = incoming; if(typeof isMediflow==='function' && isMediflow()){ render(); await refreshMediflow(); } else setConnection(true); render(); }
+  catch(error) { if(typeof isMediflow==='function' && isMediflow()){mediflow.connected=false;mfConnection();render();}else setConnection(false); if(error.status === 401) { snapshot=null; if(typeof mediflow!=='undefined')mediflow.clear();clearRunSurfaces(); } if(error.status === 401 || error.code === 'bootstrap_required' || error.code === 'password_change_required') { connectionLabel = 'Local sign-in required'; $('#connection').innerHTML=`<i></i> ${t("Local sign-in required")}`; if(typeof checkAccess === 'function') checkAccess(); } if (!snapshot) { $('#runs-body').innerHTML = `<tr><td colspan="6" class="empty">${t("Sign in locally to finish setup, or check that python server.py is running.")}</td></tr>`; $('#selected-title').textContent = t("Waiting for the local demo API"); } }
   finally { refreshBusy = false; }
 }
 function clearRunSurfaces(){
@@ -41,6 +42,7 @@ function selectRun(id) { selectedId = id; try { localStorage.setItem('forge.sele
 function latest(run) { return run.latest_metrics || run.metrics?.at(-1) || {}; }
 function render() {
   if (!snapshot) return;
+  if(typeof isMediflow==='function' && isMediflow()){renderMediflow();return;}
   document.body?.setAttribute('data-view', nav);
   updateExplorerSize();
   const focused = document.activeElement;
@@ -92,6 +94,7 @@ function render() {
   }
 }
 function renderDetail(run) {
+  if(typeof isMediflow==='function' && isMediflow())return renderMediflowDetail(run);
   const real=run.simulated===false;
   const metric = latest(run), step = run.step ?? run.current_step ?? 0;
   $('#selected-title').textContent = run.name;
@@ -160,7 +163,7 @@ async function performAction(id, action) {
   catch (error) { toast(error.message,true); }
   finally { requestBusy = false; render(); }
 }
-function openDialog(){ $('#form-error').hidden = true; $('#run-dialog').showModal(); }
+function openDialog(){ if(typeof isMediflow==='function' && isMediflow())return; $('#form-error').hidden = true; $('#run-dialog').showModal(); }
 $('#new-run').onclick = ()=>setNav('recipes'); $('#close-dialog').onclick = () => $('#run-dialog').close(); $('#cancel-dialog').onclick = () => $('#run-dialog').close();
 $('#run-dialog').addEventListener('click', e => { if (e.target === $('#run-dialog')) { const box = $('#run-dialog').getBoundingClientRect(); if(e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) $('#run-dialog').close(); } });
 $('#run-form').addEventListener('submit', async e => {
@@ -230,7 +233,7 @@ $$('.mobile-surfaces button').forEach(button=>button.onclick=()=>setMobileSurfac
 $('#inspector-toggle').onclick=()=>{inspectorHidden=!inspectorHidden;try{localStorage.setItem('forge.inspectorHidden',String(inspectorHidden));}catch{}render();};
 $('#console-size').oninput=event=>{const height=Math.max(160,Math.min(400,Number(event.target.value)));$('#run-detail').style.setProperty('--console-height',height+'px');};
 $$('.nav-item').forEach(btn => { btn.onclick = () => setNav(btn.dataset.nav); });
-refresh(); setInterval(refresh,2000); document.addEventListener('visibilitychange', () => { if(!document.hidden) refresh(); });
+refresh(); setInterval(refresh,3000); document.addEventListener('visibilitychange', () => { if(!document.hidden) refresh(); });
 
 $('#run-form select[name="kind"]').onchange = (e) => { const vlm = e.target.value === 'VLM'; $('#run-form select[name="model"]').value = vlm ? 'demo/vlm-3b' : 'demo/llm-3b'; $('#run-form input[name="dataset"]').value = vlm ? 'synthetic-image-captions' : 'synthetic-instructions'; };
 
@@ -252,6 +255,7 @@ if(typeof ResizeObserver!=='undefined'){
 // SVG text uses CSS tokens; redraw only charts after swap, preserving drafts/log scroll.
 function redrawTypographyCharts(){
   const run=snapshot?.runs?.find(run=>run.id===selectedId);
+  if(typeof isMediflow==='function' && isMediflow()){if(run)renderMediflowDetail(run);if(nav==='compare')updateMediflowComparison();fitChartTypography();return;}
   if(run) $('#loss-chart').innerHTML=chart(run.metrics||[],run.total_steps,run.simulated!==false,Boolean(snapshot?.ui_fixture));
   if(nav==='compare' && typeof updateComparison==='function' && $('#compare-output')) updateComparison();
   fitChartTypography();

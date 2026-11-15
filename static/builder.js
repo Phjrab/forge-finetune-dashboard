@@ -94,6 +94,7 @@ function validateBuilderRange(step){for(let index=0;index<step;index++)if(!valid
 function builderDatasetReady(config){const ds=builderState.datasets.find(ds=>ds.id===config.dataset);return Boolean(ds?.split && ds.kind===config.kind && !ds.split.warnings?.some(w=>w.code==='duplicate_leakage_risk'));}
 function builderModelReady(config){const model=typeof selectedHubModel!=='undefined' && selectedHubModel?.id===config.model ? selectedHubModel : installedTrainingModels.find(m=>m.id===config.model);return Boolean(model?.installed && model.training_candidate!==false && model.kind===config.kind && ['LLM','VLM'].includes(model.kind));}
 function builderLaunchReady(source,config=readRecipe()){
+  if(typeof isMediflow==='function' && isMediflow())return false;
   const checked=builderState.drySignature===builderSignature(config);
   return !builderState.busy && remoteControlsAllowed && source===builderState.source && checked && (source==='demo' || (builderState.cap?.available && builderDatasetReady(config) && builderModelReady(config) && builderState.preflightSignature===builderSignature(config)));
 }
