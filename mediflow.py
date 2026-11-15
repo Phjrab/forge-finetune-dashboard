@@ -781,7 +781,7 @@ class MediflowBridge:
                 # Count unique successful first-seed jobs, not attempts or smoke/eval.
                 done = {r["job_id"] for r in subset if re.fullmatch(r"v6-first-seed-(?:T[1-6]|V[1-4])", r["job_id"]) and r["training_succeeded"] is True and r["reload_succeeded"] is True}
                 campaigns.append({"campaign_id": cid, "run_count": len(subset), "status_counts": dict(Counter(r["status"] for r in subset)),
-                                  "first_seed_completed": len(done), "first_seed_expected": 10,
+                                  "first_seed_completed": len(done), "first_seed_expected": 10 if any(re.fullmatch(r"v6-first-seed-(?:T[1-6]|V[1-4])", r["job_id"]) for r in subset) else None,
                                   "last_emitted_at": max((r["last_emitted_at"] for r in subset if r["last_emitted_at"]), default=None)})
             return self._page(campaigns, offset, limit, "campaigns")
         if route == "/datasets" and method == "GET":
