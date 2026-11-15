@@ -77,3 +77,4 @@ body[data-backend=mediflow][data-view=overview] .workspace-alerts:not([hidden]){
 @media(max-width:760px){.mf-campaign-toolbar{align-items:flex-start;flex-direction:column;gap:4px}.mf-campaign-toolbar select{max-width:240px}}
 
 html[lang=ko] body[data-backend=mediflow] .experiments td:nth-child(4)::before{content:"손실: "}
+body[data-backend=mediflow] #run-observed{display:block;font-size:11px;overflow-wrap:anywhere;margin-top:4px}
