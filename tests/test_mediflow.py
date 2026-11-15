@@ -1,4 +1,6 @@
 """CPU fixtures exercise durable cursors, immutable references and public privacy."""
+from contextlib import contextmanager
+import errno
 import hashlib
 import json
 import os
@@ -509,6 +511,102 @@ class MediflowTests(unittest.TestCase):
         self.assertFalse(detail["run"]["stale"])
         self.assertEqual(detail["status"]["optimizer_step"], 7)
         self.assertEqual(detail["status"]["last_emitted_at"], current)
+
+    def test_transient_permission_error_resets_cursor_and_restores_full_replay(self):
+        self.append([step(1), step(2)])
+        rid = self.rid()
+        before = self.get("/runs/" + rid + "/steps")
+        original_open = self.bridge._open
+        @contextmanager
+        def unavailable(relative):
+            if relative.endswith("steps.jsonl"):
+                raise PermissionError(errno.EACCES, "private rejected path")
+            with original_open(relative) as stream:
+                yield stream
+        with mock.patch.object(self.bridge, "_open", unavailable):
+            unavailable_page = self.get("/runs/" + rid + "/steps")
+            self.assertEqual(unavailable_page["items"], [])
+            self.assertFalse(unavailable_page["telemetry_complete"])
+        restored = self.get("/runs/" + rid + "/steps")
+        self.assertEqual([r["seq"] for r in restored["items"]], [1, 2])
+        self.assertNotEqual(restored["stream_epoch"], before["stream_epoch"])
+        self.assert_error("cursor_reset", lambda: self.get("/runs/" + rid + "/steps", after_seq="2", stream_epoch=before["stream_epoch"]), 409)
+
+    def test_missing_source_restore_replays_every_original_record_after_restart(self):
+        self.append([step(1), step(2)])
+        rid = self.rid()
+        before = self.get("/runs/" + rid + "/steps")
+        source = self.attempt / "steps.jsonl"
+        backup = self.attempt / "steps.private-backup"
+        source.rename(backup)
+        self.get("/health")
+        self.bridge.close()
+        self.bridge = MediflowBridge(self.root, self.dbpath)
+        backup.rename(source)
+        restored = self.get("/runs/" + rid + "/steps")
+        self.assertEqual([r["seq"] for r in restored["items"]], [1, 2])
+        self.assertNotEqual(restored["stream_epoch"], before["stream_epoch"])
+
+    def test_mid_read_io_error_discards_partial_transaction_and_restores_replay(self):
+        self.append([step(1)])
+        rid = self.rid()
+        before = self.get("/runs/" + rid + "/steps")
+        self.append([step(2), step(3)])
+        original_open = self.bridge._open
+        class FailingRead:
+            def __init__(self, stream):
+                self.stream = stream
+                self.reads = 0
+            def __getattr__(self, name):
+                return getattr(self.stream, name)
+            def readline(self, size):
+                self.reads += 1
+                if self.reads > 1:
+                    raise OSError(errno.EIO, "private I/O diagnostic")
+                return self.stream.readline(size)
+        @contextmanager
+        def failing(relative):
+            with original_open(relative) as stream:
+                yield FailingRead(stream) if relative.endswith("steps.jsonl") else stream
+        with mock.patch.object(self.bridge, "_open", failing):
+            self.get("/health")
+        state = self.bridge._db.execute("SELECT * FROM mf_streams WHERE run_id=? AND stream='steps'", (rid,)).fetchone()
+        self.assertEqual(state["offset"], 0)
+        self.assertEqual(state["max_seq"], 0)
+        self.assertIsNone(state["inode"])
+        self.assertEqual(self.bridge._db.execute("SELECT count(*) FROM mf_records WHERE run_id=? AND stream='steps'", (rid,)).fetchone()[0], 0)
+        self.bridge.close()
+        self.bridge = MediflowBridge(self.root, self.dbpath)
+        restored = self.get("/runs/" + rid + "/steps")
+        self.assertEqual([r["seq"] for r in restored["items"]], [1, 2, 3])
+        self.assertNotEqual(restored["stream_epoch"], before["stream_epoch"])
+
+    def test_symlink_rejection_then_same_inode_restore_replays_full_epoch(self):
+        self.append([step(1), step(2)])
+        rid = self.rid()
+        before = self.get("/runs/" + rid + "/steps")
+        source = self.attempt / "steps.jsonl"
+        original_inode = source.stat().st_ino
+        backup = self.attempt / "steps.private-backup"
+        source.rename(backup)
+        outside = self.base / "private.jsonl"
+        outside.write_text(json.dumps(step(3, train_loss=999)) + "\n")
+        source.symlink_to(outside)
+        blocked = self.get("/runs/" + rid + "/steps")
+        self.assertEqual(blocked["items"], [])
+        self.assertNotEqual(blocked["stream_epoch"], before["stream_epoch"])
+        repeated = self.get("/runs/" + rid + "/steps")
+        self.assertEqual(repeated["stream_epoch"], blocked["stream_epoch"])
+        source.unlink()
+        backup.rename(source)
+        self.assertEqual(source.stat().st_ino, original_inode)
+        self.bridge.close()
+        self.bridge = MediflowBridge(self.root, self.dbpath)
+        restored = self.get("/runs/" + rid + "/steps", stream_epoch=blocked["stream_epoch"])
+        self.assertEqual([r["seq"] for r in restored["items"]], [1, 2])
+        self.assertEqual(restored["stream_epoch"], blocked["stream_epoch"])
+        self.assertTrue(restored["telemetry_complete"])
+        self.assertNotIn(999, [r["train_loss"] for r in restored["items"]])
 
     def test_threaded_read_model_requests(self):
         self.append([step(i) for i in range(1, 25)])

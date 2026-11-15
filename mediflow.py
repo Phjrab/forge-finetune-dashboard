@@ -585,6 +585,21 @@ class MediflowBridge:
         identity = [manifest[k] for k in ("campaign_id", "job_id", "run_id", "attempt_id")]
         return hashlib.sha256(_json(identity + [stream, producer, generation]).encode()).hexdigest()
 
+    def _invalidate_stream(self, rid, stream, manifest):
+        """Invalidate rows and their replay position atomically, never one alone.
+
+        Source access failures can occur after some records were inserted but
+        before the committed offset was updated. Clear that partial import too.
+        Repeated polls while the source is unavailable keep the reset epoch.
+        """
+        state = self._db.execute("SELECT * FROM mf_streams WHERE run_id=? AND stream=?", (rid, stream)).fetchone()
+        rows = self._db.execute("SELECT 1 FROM mf_records WHERE run_id=? AND stream=? LIMIT 1", (rid, stream)).fetchone()
+        had_source = state["inode"] is not None or state["offset"] or state["max_seq"] or rows is not None
+        generation = state["generation"] + int(bool(had_source))
+        self._db.execute("DELETE FROM mf_records WHERE run_id=? AND stream=?", (rid, stream))
+        self._db.execute("UPDATE mf_streams SET inode=NULL,dev=NULL,offset=0,size=0,max_seq=0,anchor=NULL,generation=?,epoch=?,integrity=0 WHERE run_id=? AND stream=?",
+                         (generation, self._epoch(manifest, stream, state["producer"], generation), rid, stream))
+
     def _ingest(self, rid, relative, m, stream):
         path = str(Path(relative, stream + ".jsonl"))
         state = self._db.execute("SELECT * FROM mf_streams WHERE run_id=? AND stream=?", (rid, stream)).fetchone()
@@ -605,7 +620,9 @@ class MediflowBridge:
                     self._note("stream_rotated")
                     state = self._db.execute("SELECT * FROM mf_streams WHERE run_id=? AND stream=?", (rid, stream)).fetchone()
                 offset, highest, producer = state["offset"], state["max_seq"], state["producer"]
-                integrity = state["integrity"]
+                # A previously unavailable source starts a fresh, fully replayed
+                # epoch; historical integrity errors are retained in health.
+                integrity = state["integrity"] if state["inode"] is not None else 1
                 f.seek(offset)
                 start = offset
                 while f.tell() - start < INGEST_BYTES:
@@ -660,15 +677,15 @@ class MediflowBridge:
                 anchor = hashlib.sha256(f.read(min(256, offset))).hexdigest() if offset else None
                 self._db.execute("UPDATE mf_streams SET producer=?,epoch=?,dev=?,inode=?,offset=?,size=?,anchor=?,max_seq=?,integrity=? WHERE run_id=? AND stream=?", (producer, self._epoch(m, stream, producer, state["generation"]), s.st_dev, s.st_ino, offset, s.st_size, anchor, highest, integrity, rid, stream))
         except FileNotFoundError:
-            # A vanished stream is a reset; do not serve stale cached records.
-            if state["inode"] is not None:
-                self._db.execute("DELETE FROM mf_records WHERE run_id=? AND stream=?", (rid, stream))
-                generation = state["generation"] + 1
-                self._db.execute("UPDATE mf_streams SET inode=NULL,dev=NULL,offset=0,max_seq=0,anchor=NULL,generation=?,epoch=?,integrity=0 WHERE run_id=? AND stream=?", (generation, self._epoch(m, stream, state["producer"], generation), rid, stream))
+            # A vanished stream is a coherent cursor reset, including a source
+            # restored later at the same inode or after a bridge restart.
+            if state["inode"] is not None or state["offset"] or state["max_seq"]:
+                self._invalidate_stream(rid, stream, m)
                 self._note("stream_missing")
         except (OSError, DashboardError):
-            self._db.execute("DELETE FROM mf_records WHERE run_id=? AND stream=?", (rid, stream))
-            self._db.execute("UPDATE mf_streams SET integrity=0 WHERE run_id=? AND stream=?", (rid, stream))
+            # Permission errors, symlink rejection and mid-read I/O errors must
+            # never leave an old offset pointing past deleted cached records.
+            self._invalidate_stream(rid, stream, m)
             self._note("stream_unavailable")
 
     def _get(self, rid):
