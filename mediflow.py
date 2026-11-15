@@ -330,7 +330,7 @@ def _metrics(value):
 def _evaluation(value):
     if not isinstance(value, dict) or not _label(value.get("evaluation_id")):
         return None
-    out = {k: _label(value.get(k)) for k in ("evaluation_id", "run_id", "dataset_id", "source_id", "language", "task", "protocol", "protocol_version", "model", "precision", "cohort_id")}
+    out = {k: _label(value.get(k)) for k in ("evaluation_id", "run_id", "dataset_id", "source_id", "language", "task", "protocol", "protocol_version", "model", "precision", "cohort_id", "image_condition", "renderer_version")}
     out.update(variant=value.get("variant") if value.get("variant") in {"base", "tuned"} else None,
                split=value.get("split") if value.get("split") in {"train", "validation", "test"} else None,
                data_hash=_hash(value.get("data_hash")),
@@ -785,8 +785,8 @@ class MediflowBridge:
                                   "last_emitted_at": max((r["last_emitted_at"] for r in subset if r["last_emitted_at"]), default=None)})
             return self._page(campaigns, offset, limit, "campaigns")
         if route == "/datasets" and method == "GET":
-            rows = self._db.execute("SELECT manifest FROM mf_datasets ORDER BY id").fetchall()
-            return self._page([_parse(r["manifest"]) for r in rows], offset, limit, "datasets")
+            rows = self._db.execute("SELECT manifest,registered FROM mf_datasets ORDER BY id").fetchall()
+            return self._page([{**_parse(r["manifest"]), "registered": bool(r["registered"])} for r in rows], offset, limit, "datasets")
         if route == "/datasets/register" and method == "POST":
             if not isinstance(payload, dict) or set(payload) != {"manifest_id"} or not isinstance(payload["manifest_id"], str) or not SAFE_ID.fullmatch(payload["manifest_id"]):
                 raise _error("invalid_request")
@@ -794,7 +794,7 @@ class MediflowBridge:
             if not row:
                 raise _error("dataset_unavailable", 404)
             self._db.execute("UPDATE mf_datasets SET registered=1 WHERE id=?", (payload["manifest_id"],))
-            return {"dataset": _parse(row["manifest"]), "registered": True}
+            return {"dataset": {**_parse(row["manifest"]), "registered": True}, "registered": True}
         match = re.fullmatch(r"/datasets/([A-Za-z0-9_-]{1,100})/records", route)
         if match and method == "GET":
             return self._metadata_page(match[1], offset, limit)

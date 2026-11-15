@@ -300,6 +300,15 @@ class MediflowTests(unittest.TestCase):
             self.assertNotIn("PRIVATE", str(conn.execute("SELECT " + col + " FROM " + table).fetchall()))
         conn.close()
 
+    def test_reference_registration_persists_separate_from_verification(self):
+        self.dataset(5)
+        self.assertFalse(self.get("/datasets")["datasets"][0]["registered"])
+        self.bridge.dispatch("POST", "/api/mediflow/datasets/register", payload={"manifest_id":"frozen-text"})
+        self.assertTrue(self.get("/datasets")["datasets"][0]["registered"])
+        self.bridge.close()
+        self.bridge = MediflowBridge(self.root, self.dbpath)
+        self.assertTrue(self.get("/datasets")["datasets"][0]["registered"])
+
     def test_metadata_hash_count_and_mutation_are_rejected(self):
         directory, m = self.dataset(5)
         m["metadata_sha256"] = "f" * 64
@@ -366,7 +375,7 @@ class MediflowTests(unittest.TestCase):
 
     def test_evaluation_aggregate_allowlist_and_bounded_pages(self):
         ev = {"evaluation_id": "evaluation-1", "run_id": "run-1", "variant": "tuned", "dataset_id": "frozen-text", "task": "vqa", "split": "test",
-              "protocol": "native", "protocol_version": "1", "data_hash": "d" * 64, "model": "example/model", "precision": "bf16", "cohort_id": "cohort-1",
+              "protocol": "native", "protocol_version": "1", "image_condition": "no_image", "renderer_version": "native-v1", "data_hash": "d" * 64, "model": "example/model", "precision": "bf16", "cohort_id": "cohort-1",
               "status": "partial", "scheduled": 10, "attempted": 8, "valid": 6, "invalid": 2, "failed": 0, "unattempted": 2,
               "metrics": {"coverage": 0.8, "answered_accuracy": 0.5, "clinical_accuracy": None, "raw_predictions": ["PRIVATE"],
                           "e2e_latency_seconds": {"n": 8, "median": 0.4, "scope": "generation_e2e", "raw_text": "PRIVATE"},
@@ -382,6 +391,8 @@ class MediflowTests(unittest.TestCase):
         self.assertTrue(result["has_more"])
         first = result["evaluations"][0]
         self.assertEqual(first["attempted"], 8)
+        self.assertEqual(first["image_condition"], "no_image")
+        self.assertEqual(first["renderer_version"], "native-v1")
         self.assertEqual(first["metrics"]["answered_accuracy"], 0.5)
         self.assertEqual(first["subgroups"][0]["label"], "OPEN")
         self.assertNotIn("PRIVATE", json.dumps(result))

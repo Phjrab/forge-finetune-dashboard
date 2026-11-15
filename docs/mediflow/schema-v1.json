@@ -260,7 +260,9 @@
       "subgroups": "array of OPEN/CLOSED, modality or image-ablation aggregate records; preserve original labels",
       "provenance": "historical_reconstructed|live_measured",
       "source_artifact": "{artifact_id,sha256}|null",
-      "receipt_verified": "boolean|null"
+      "receipt_verified": "boolean|null",
+      "image_condition": "string|null, native inclusion/ablation condition",
+      "renderer_version": "string|null, native input renderer identity"
     },
     "metric_names": [
       "coverage",
@@ -356,5 +358,6 @@
     "path": "Existing campaign_gpu_smoke.py 20-update native T1 text and V1 VLM path, instrumented with same writer; sequential under unchanged real GPU lease. Do not create new trainer or relax smoke identity checks.",
     "preparation": "C2 may prepare immutable configs CPU-only using existing build_config and pinned candidate source files/hash, original model/data freeze and original data root lock. source_files must include telemetry.py so source hash covers actual instrumentation. Owner validates launch/lease and executes.",
     "requested_evidence": "Per probe at least two distinct measured optimizer steps and losses, saved checkpoint and fresh reload receipt, bridge/browser arrival and refresh, process/cgroup independence; on/off overhead CPU first then owner GPU if feasible. No 500-update full run needed for candidate probe."
-  }
+  },
+  "additive_revision": "2026-11-15-image-condition-and-registration"
 }
