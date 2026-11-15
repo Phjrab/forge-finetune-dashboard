@@ -482,6 +482,23 @@ class MediflowTests(unittest.TestCase):
         with mock.patch("mediflow.MAX_SNAPSHOT_BYTES", 250):
             self.assertIn("snapshot_unavailable", self.get("/health")["errors"])
 
+    def test_live_steps_advance_beyond_lifecycle_zero_snapshot(self):
+        from datetime import datetime, timezone
+        current = datetime.now(timezone.utc).isoformat()
+        dump(self.attempt / "status.json", {"status": "running", "phase": "training", "optimizer_step": 0,
+             "samples_processed": 0, "last_emitted_at": "2001-01-01T00:00:00Z"})
+        self.append([step(7, emitted_at=current, observed_at=current)])
+        # An old lifecycle event is ingested after the steps stream in a refresh.
+        self.append([step(1, event="training_started", emitted_at="2001-01-01T00:00:00Z", observed_at="2001-01-01T00:00:00Z")], "events")
+        detail = self.get("/runs/" + self.rid())
+        self.assertEqual(detail["run"]["optimizer_step"], 7)
+        self.assertEqual(detail["run"]["samples_processed"], 91)
+        self.assertEqual(detail["run"]["last_emitted_at"], current)
+        self.assertEqual(detail["run"]["observed_at"], current)
+        self.assertFalse(detail["run"]["stale"])
+        self.assertEqual(detail["status"]["optimizer_step"], 7)
+        self.assertEqual(detail["status"]["last_emitted_at"], current)
+
     def test_threaded_read_model_requests(self):
         self.append([step(i) for i in range(1, 25)])
         failures = []

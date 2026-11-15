@@ -683,19 +683,30 @@ class MediflowBridge:
         m, status = _parse(row["manifest"]), _parse(row["status"])
         latest = self._db.execute("SELECT value FROM mf_records WHERE run_id=? AND stream='steps' ORDER BY seq DESC LIMIT 1", (row["id"],)).fetchone()
         step = _parse(latest["value"]) if latest else {}
-        latest_any = self._db.execute("SELECT value FROM mf_records WHERE run_id=? ORDER BY rowid DESC LIMIT 1", (row["id"],)).fetchone()
-        activity = _parse(latest_any["value"]) if latest_any else {}
+        # The lifecycle owner updates snapshots on phase changes. Its initial
+        # counters and timestamp must not hide newer child step/resource records.
+        tails = []
+        for stream in STREAMS:
+            tail = self._db.execute("SELECT value FROM mf_records WHERE run_id=? AND stream=? ORDER BY seq DESC LIMIT 1", (row["id"], stream)).fetchone()
+            if tail:
+                tails.append(_parse(tail["value"]))
+        def newest(values):
+            values = [v for v in values if v]
+            return max(values, key=lambda v: datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()) if values else None
         out = {k: m.get(k) for k in ("campaign_id", "job_id", "run_id", "attempt_id", "source", "model", "task", "seed", "historical", "data_hash", "scientific_recipe_hash", "code_sha", "eval_protocol", "precision", "cohort_id")}
         out.update(id=row["id"], status=status["status"], phase=status["phase"], train_loss=step.get("train_loss"))
-        for k in ("optimizer_step", "total_updates", "samples_processed", "samples_total"):
-            out[k] = status.get(k) if status.get(k) is not None else step.get(k, m.get(k))
+        for k in ("optimizer_step", "samples_processed"):
+            values = [v for v in (status.get(k), step.get(k)) if v is not None]
+            out[k] = max(values) if values else None
+        for k in ("total_updates", "samples_total"):
+            out[k] = status.get(k) if status.get(k) is not None else step.get(k) if step.get(k) is not None else m.get(k)
         for k in ("training_succeeded", "reload_succeeded", "evaluation_completed", "telemetry_complete"):
             out[k] = status.get(k)
         bad = self._db.execute("SELECT 1 FROM mf_streams WHERE run_id=? AND integrity=0 LIMIT 1", (row["id"],)).fetchone()
         if bad:
             out["telemetry_complete"] = False
-        out["last_emitted_at"] = status.get("last_emitted_at") or activity.get("emitted_at")
-        out["observed_at"] = activity.get("observed_at")
+        out["last_emitted_at"] = newest([status.get("last_emitted_at")] + [r.get("emitted_at") for r in tails])
+        out["observed_at"] = newest([r.get("observed_at") for r in tails])
         age_from = row["activity"]
         if out["last_emitted_at"]:
             age_from = datetime.fromisoformat(out["last_emitted_at"].replace("Z", "+00:00")).timestamp()
@@ -793,8 +804,8 @@ class MediflowBridge:
             row = self._get(rid)
             run = self._run(row)
             m, status, summary = _parse(row["manifest"]), _parse(row["status"]), _parse(row["summary"]) if row["summary"] else None
-            if run["telemetry_complete"] is False:
-                status["telemetry_complete"] = False
+            for key in ("optimizer_step", "samples_processed", "total_updates", "samples_total", "last_emitted_at", "telemetry_complete"):
+                status[key] = run[key]
             if action is None:
                 return {"run": run, "manifest": m, "status": status, "summary": summary, "artifacts": m["artifacts"]}
             if action == "evaluations":
