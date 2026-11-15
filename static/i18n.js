@@ -4,6 +4,10 @@
 // change API identifiers, dataset records, run names, logs or exported JSON.
 const I18n = (() => {
   const korean = {
+    "Campaign":"캠페인",
+    "All campaigns":"모든 캠페인",
+    "Live runs first · historical records with loss first":"실시간 실행 우선 · 손실이 있는 과거 기록 우선",
+    "Runs":"실행 수",
     "Observed span seconds":"관측 구간 초 · 파생값",
     "Final aggregate · receipt not verified":"최종 집계 · 영수증 미검증",
     "MediFlow · external engine":"MediFlow · 외부 엔진",

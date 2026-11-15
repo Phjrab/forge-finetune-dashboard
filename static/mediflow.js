@@ -2,7 +2,7 @@
 // This client is a read model. It never launches, signals, or owns a worker.
 class MediflowClient {
   constructor(request) { this.request=request; this.runs=[];this.campaigns=[];this.health=null;this.cache=new Map();this.connected=false; }
-  clear() {this.runs=[];this.campaigns=[];this.health=null;this.cache.clear();this.connected=false;}
+  clear() {this.runs=[];this.campaigns=[];this.health=null;this.cache.clear();this.connected=false;mediflowCampaignFilter='';}
   entry(id) { if(!this.cache.has(id))this.cache.set(id,{streams:Object.fromEntries(['steps','resources','events'].map(name=>[name,{cursor:0,epoch:null,items:[],complete:null}])),evaluations:[],detail:null,errors:[]});return this.cache.get(id); }
   reset(id,name) { this.entry(id).streams[name]={cursor:0,epoch:null,items:[],complete:null}; }
   accept(id,name,page) {
@@ -51,7 +51,7 @@ class MediflowClient {
     try {
       const results=await Promise.allSettled([this.request('/api/mediflow/health'),this.list('/api/mediflow/campaigns','campaigns'),this.list('/api/mediflow/runs','runs')]);
       if(results.some(r=>r.status==='rejected'))throw results.find(r=>r.status==='rejected').reason;
-      this.health=results[0].value;this.campaigns=results[1].value;this.runs=results[2].value;
+      this.health=results[0].value;this.campaigns=results[1].value;this.runs=mfOrderRuns(results[2].value);
       const targets=[...new Set(ids.filter(id=>this.runs.some(run=>run.id===id)))];
       if(!targets.length && this.runs.length)targets.push(this.runs[0].id);
       const details=await Promise.allSettled(targets.map(id=>this.hydrate(id)));
@@ -59,6 +59,12 @@ class MediflowClient {
       this.connected=details.every(result=>result.status==='fulfilled') && this.health.connected!==false;
     }catch(error){this.connected=false;throw error;}
   }
+}
+let mediflowCampaignFilter='';
+function mfOrderRuns(runs){
+  const rank=run=>run.source==='mediflow_live'&&!run.historical?(run.status==='running'?0:1):typeof run.train_loss==='number'&&Number.isFinite(run.train_loss)?2:3;
+  const identity=run=>[run.campaign_id,run.job_id,run.run_id,run.attempt_id].join(' · ');
+  return [...runs].sort((a,b)=>rank(a)-rank(b)||(Date.parse(b.last_emitted_at)||0)-(Date.parse(a.last_emitted_at)||0)||identity(a).localeCompare(identity(b),undefined,{numeric:true}));
 }
 const mediflow = new MediflowClient((path,body)=>api(path,body));
 function isMediflow(){return snapshot?.mode==='mediflow';}
@@ -98,28 +104,47 @@ function renderMediflowSource(){
   if($('#tab-resources'))$('#tab-resources').hidden=false;
   $('.demo-notice').innerHTML=`<div><strong>${t('MediFlow · external engine')}</strong><span>${t('Execution belongs to the MediFlow supervisor. Forge displays durable observations.')}</span></div>`;
   for(const selector of ['#new-run','#empty-new','#revise-config']){const node=$(selector);if(node){node.disabled=true;node.title=t('Execution controls unavailable');}}
-  for(const selector of ['.demo-tag','.local-badge'])if($(selector))$(selector).textContent=t('MediFlow · external engine');
+  for(const selector of ['.workspace small','footer span','.demo-tag','.local-badge'])if($(selector))$(selector).textContent=t('MediFlow · external engine');
 }
 function renderMediflow(){
   document.body?.setAttribute('data-view',nav);updateExplorerSize();renderMediflowSource();
-  const runs=mediflow.runs.length?mediflow.runs:(snapshot.runs||[]);
-  if(!runs.some(run=>run.id===selectedId))selectedId=runs[0]?.id||null;
-  const selected=runs.find(run=>run.id===selectedId);
+  const runs=mfOrderRuns(mediflow.runs.length?mediflow.runs:(snapshot.runs||[]));
+  const campaignRuns=runs.filter(run=>!mediflowCampaignFilter||run.campaign_id===mediflowCampaignFilter);
+  if(!campaignRuns.some(run=>run.id===selectedId))selectedId=campaignRuns[0]?.id||null;
+  const selected=campaignRuns.find(run=>run.id===selectedId);
   const advanced=!['overview','runs','artifacts'].includes(nav);
   $('#run-detail').hidden=advanced||!selected;$('#workbench-empty').hidden=advanced||Boolean(selected);
   $('#workbench-empty h2').textContent=t('No MediFlow runs registered');$('#workbench-empty p').textContent=t('Waiting for durable telemetry. No demo values are substituted.');
   $('#workspace-alerts').hidden=nav!=='overview';
-  $('#workspace-alerts').innerHTML=`<div class="mf-campaigns">${(mediflow.campaigns||[]).map(c=>`<div><strong>${escapeHtml(c.campaign_id)}</strong><span>${t('First seed complete')}: ${escapeHtml(mfValue(c.first_seed_completed))} / ${escapeHtml(mfValue(c.first_seed_expected))}</span><span>${escapeHtml(Object.entries(c.status_counts||{}).map(([key,value])=>`${t(key)}: ${value}`).join(' · '))}</span><span>${escapeHtml(Object.entries(runs.filter(run=>run.campaign_id===c.campaign_id).reduce((counts,run)=>{const phase=run.phase||'unknown';counts[phase]=(counts[phase]||0)+1;return counts;},{})).map(([key,value])=>`${t(key)}: ${value}`).join(' · '))}</span><small>${mfTime(c.last_emitted_at)}</small></div>`).join('')||t('No MediFlow campaigns registered')}</div>`;
+  renderMediflowCampaigns(runs);
   for(const selector of ['#summary-total','#nav-count','#experiment-count'])$(selector).textContent=runs.length;
   $$('.filter').forEach(btn=>btn.setAttribute('aria-pressed',String(btn.dataset.filter===filter)));
-  const shown=runs.filter(run=>filter==='all'||mfKind(run)===filter);
+  const shown=campaignRuns.filter(run=>filter==='all'||mfKind(run)===filter);
+  $('#experiment-count').textContent=shown.length;
   $('#no-runs').textContent=t('No experiments in this view yet');$('#no-runs').hidden=shown.length>0;
   $('#runs-body').innerHTML=shown.map(run=>{const progress=mfNumber(run.optimizer_step)&&mfNumber(run.total_updates)&&run.total_updates>0?pct(run.optimizer_step/run.total_updates*100):null;return `<tr tabindex="0" data-run="${escapeHtml(run.id)}" class="${run.id===selectedId?'selected':''}" aria-label="${escapeHtml(t('Select')+' '+mfName(run))}"><td><div class="run-name"><span class="type-icon">${run.task==='vqa'?'▧':'≋'}</span><div>${escapeHtml(mfName(run))}<div class="run-meta">${escapeHtml(mfSource(run))} · ${escapeHtml(mfKind(run))} · ${escapeHtml(mfValue(run.model))}</div></div></div></td><td><span class="status ${escapeHtml(run.status||'unknown')}">${escapeHtml(t(run.status||'Unknown'))}</span>${run.stale?`<span class="pill">${t('Worker stale')}</span>`:''}<small>${escapeHtml(t(run.phase||'Unknown'))}</small></td><td>${progress===null?'—':`${fmt(progress,0)}%`}<small>${escapeHtml(mfValue(run.optimizer_step))} / ${escapeHtml(mfValue(run.total_updates))}</small></td><td>${fmt(run.train_loss)}</td><td>${escapeHtml(run.campaign_id)}</td><td>↗</td></tr>`;}).join('');
   $$('#runs-body tr[data-run]').forEach(row=>{row.onclick=()=>{selectRun(row.dataset.run);refresh();};row.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();row.onclick();}};});
-  $('#mobile-run').innerHTML=runs.map(run=>`<option value="${escapeHtml(run.id)}">${escapeHtml(mfName(run))} · ${escapeHtml(mfSource(run))}</option>`).join('');$('#mobile-run').value=selectedId||'';
+  $('#mobile-run').innerHTML=campaignRuns.map(run=>`<option value="${escapeHtml(run.id)}">${escapeHtml(mfName(run))} · ${escapeHtml(mfSource(run))}</option>`).join('');$('#mobile-run').value=selectedId||'';
   $('#mobile-run-label').hidden=advanced;
   if(selected)renderMediflowDetail(selected);
   if(nav==='compare' && $('#compare-output'))updateMediflowComparison();
+}
+function mfCampaignSummary(c,runs){
+  const subset=runs.filter(run=>run.campaign_id===c.campaign_id);
+  const firstSeed=subset.some(run=>/^v6-first-seed-(?:T[1-6]|V[1-4])$/.test(run.job_id||''));
+  return firstSeed?`${t('First seed complete')}: ${mfValue(c.first_seed_completed)} / ${mfValue(c.first_seed_expected)}`:`${t('Runs')}: ${mfValue(c.run_count??subset.length)}`;
+}
+function renderMediflowCampaigns(runs){
+  const host=$('#workspace-alerts');
+  if(!host.dataset.mfCampaignLayout){host.innerHTML=`<div class="mf-campaign-toolbar"><label><span id="mf-campaign-label"></span> <select id="mf-campaign-select" aria-label="${t('Campaign')}"></select></label><small id="mf-run-order"></small></div><div class="mf-campaigns" id="mf-campaign-summary"></div>`;host.dataset.mfCampaignLayout='true';}
+  const select=$('#mf-campaign-select');
+  $('#mf-campaign-label').textContent=t('Campaign');select.setAttribute('aria-label',t('Campaign'));
+  const options=`<option value="">${t('All campaigns')}</option>`+(mediflow.campaigns||[]).map(c=>`<option value="${escapeHtml(c.campaign_id)}">${escapeHtml(c.campaign_id)}</option>`).join('');
+  if(select.innerHTML!==options)select.innerHTML=options;
+  if(select.value!==mediflowCampaignFilter)select.value=mediflowCampaignFilter;
+  select.onchange=()=>{mediflowCampaignFilter=select.value;render();refresh();};
+  $('#mf-run-order').textContent=t('Live runs first · historical records with loss first');
+  $('#mf-campaign-summary').innerHTML=(mediflow.campaigns||[]).map(c=>`<div><strong>${escapeHtml(c.campaign_id)}</strong><span>${escapeHtml(mfCampaignSummary(c,runs))}</span><small>${escapeHtml(Object.entries(c.status_counts||{}).map(([key,value])=>`${t(key)}: ${value}`).join(' · '))}</small><small>${escapeHtml([...new Set(runs.filter(run=>run.campaign_id===c.campaign_id&&!['succeeded','failed','unknown'].includes(run.phase)).map(run=>t(run.phase)))].join(' · '))}</small><small>${mfTime(c.last_emitted_at)}</small></div>`).join('')||t('No MediFlow campaigns registered');
 }
 function renderMediflowDetail(run){
   const entry=mediflow.entry(run.id),detail=entry.detail||{},status=detail.status||{},summary=detail.summary||{},steps=entry.streams.steps.items,last=steps.at(-1)||{},resources=entry.streams.resources.items,resource=resources.at(-1)||{};

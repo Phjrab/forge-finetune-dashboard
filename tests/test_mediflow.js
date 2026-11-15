@@ -59,6 +59,19 @@ const step=(seq,value)=>({seq,optimizer_step:seq,train_loss:value,lr_used:null,p
   await assert.rejects(run("api('/api/training/runs',{})"),/Execution controls/);await assert.rejects(run("api('/api/runs',{})"),/Execution controls/);assert.equal(run("builderLaunchReady('demo',{})"),false);assert.equal(run("builderLaunchReady('real',{})"),false);
   run("mediflow.connected=false;mfConnection()");assert.match(get('#connection').innerHTML,/Disconnected/);assert.ok(!get('#connection').innerHTML.includes('Worker stale'));
   run("mediflow.connected=true;mediflow.runs[0].stale=true;render();mfConnection()");assert.match(get('#connection').innerHTML,/connected/);assert.match(get('#run-observed').textContent,/Worker stale/);
+  // Stable display order prefers a live worker and real historical loss over opaque IDs.
+  const orderRows=[{...row,id:'mf-00',job_id:'evaluation',train_loss:null},{...row,id:'mf-99',job_id:'T2',train_loss:2},{...row,id:'mf-50',job_id:'T10',train_loss:2},{...row,id:'mf-live',source:'mediflow_live',historical:false,status:'running'}];
+  assert.equal(run(`mfOrderRuns(${JSON.stringify(orderRows)})`)[0].id,'mf-live');
+  assert.equal(run(`mfOrderRuns(${JSON.stringify(orderRows)})`)[1].job_id,'T2');
+  assert.equal(run(`mfOrderRuns(${JSON.stringify(orderRows)})`).at(-1).job_id,'evaluation');
+  assert.equal(run(`mfCampaignSummary({campaign_id:'old',run_count:3,first_seed_completed:0,first_seed_expected:10},${JSON.stringify([row])})`),'Runs: 3');
+  assert.equal(run(`mfCampaignSummary({campaign_id:'old',run_count:1,first_seed_completed:1,first_seed_expected:10},[{...${JSON.stringify(row)},job_id:'v6-first-seed-T1'}])`),'First seed complete: 1 / 10');
+  run(`mediflow.runs=${JSON.stringify([row,{...row,id:id2,campaign_id:'second',job_id:'second-only'}])};mediflowCampaignFilter='second';selectedId='${id}';render()`);
+  assert.equal(run('selectedId'),id2);assert.match(get('#runs-body').innerHTML,/second-only/);assert.ok(!get('#runs-body').innerHTML.includes('old-text'));
+  run(`mediflowCampaignFilter='';selectedId='${id}';render()`);assert.equal(run('selectedId'),id);
+  assert.equal(get('.workspace small').textContent,'MediFlow · external engine');assert.equal(get('footer span').textContent,'MediFlow · external engine');
+  const campaignOptions=get('#mf-campaign-select').innerHTML;run('render()');assert.equal(get('#mf-campaign-select').innerHTML,campaignOptions);
+  run("I18n.setLanguage('ko');render()");assert.equal(get('#mf-campaign-label').textContent,'캠페인');assert.match(get('footer span').textContent,/외부 엔진/);run("I18n.setLanguage('en')");
   assert.match(fs.readFileSync('static/app.js','utf8'),/setInterval\(refresh,3000\)/);assert.match(fs.readFileSync('static/index.html','utf8'),/src="\/mediflow.js"/);
   console.log('PASS MediFlow independent cursors, replay/dedupe, rotation/reset, reconnect, registry pages, empty hydration, history/null/XSS, evaluation denominators/cohorts, KO/EN and legacy launch guards (CPU DOM stubs only).');
 })().catch(error=>{console.error(error);process.exitCode=1;});
