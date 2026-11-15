@@ -401,6 +401,87 @@ class MediflowTests(unittest.TestCase):
         self.assertNotIn("PRIVATE", json.dumps(result))
         self.assertIsNone(result["run"]["train_loss"])
 
+    def test_canonical_provenance_dicts_and_public_license_references(self):
+        directory, m = self.dataset(1)
+        raw = {"sample_id": "source/revision/id", "source_id": "source", "source_revision": "revision",
+               "group_ids": {"patient": None, "study": "study-1", "document": "https://example.org/document/1", "image": "image-hash", "parent": "parent-1", "duplicate_cluster": "cluster-1", "raw_answer": "PRIVATE"},
+               "restrictions": {"raw_redistribution": False, "research_only": True, "sft_allowed": True, "dataset_license": "CC-BY-4.0", "attribution_required": True, "raw_answer": "PRIVATE"},
+               "license_ref": "https://example.org/LICENSE", "derivation": "original", "review_status": "machine_checked"}
+        payload = (json.dumps(raw) + "\n").encode()
+        (directory / "records.metadata.jsonl").write_bytes(payload)
+        m["metadata_sha256"] = hashlib.sha256(payload).hexdigest()
+        m["sources"][0].update(license_ref=raw["license_ref"], restrictions=raw["restrictions"])
+        dump(directory / "manifest.json", m)
+        result = self.get("/datasets/frozen-text/records")["records"][0]
+        self.assertEqual(result["group_ids"]["study"], "study-1")
+        self.assertEqual(result["group_ids"]["document"], "https://example.org/document/1")
+        self.assertIsNone(result["group_ids"]["patient"])
+        self.assertTrue(result["restrictions"]["sft_allowed"])
+        self.assertEqual(result["license_ref"], raw["license_ref"])
+        self.assertEqual(result["derivation"], "original")
+        source = self.get("/datasets")["datasets"][0]["sources"][0]
+        self.assertEqual(source["license_ref"], raw["license_ref"])
+        self.assertEqual(source["restrictions"]["dataset_license"], "CC-BY-4.0")
+        self.assertNotIn("PRIVATE", json.dumps(result))
+
+    def test_evaluator_dimension_and_value_preserved_for_ui_label(self):
+        dump(self.attempt / "evaluations.json", {"evaluations": [{"evaluation_id": "ev-1", "status": "partial",
+             "subgroups": [{"source_id": "slake", "dimension": "answer_type", "value": "OPEN", "metrics": {"lexical_token_f1": 0.8}}]}]})
+        subgroup = self.get("/runs/" + self.rid() + "/evaluations")["evaluations"][0]["subgroups"][0]
+        self.assertEqual(subgroup["label"], "OPEN")
+        self.assertEqual(subgroup["dimension"], "answer_type")
+        self.assertEqual(subgroup["value"], "OPEN")
+        self.assertEqual(subgroup["source_id"], "slake")
+
+    def test_metadata_index_incremental_and_restart(self):
+        self.dataset(80)
+        with mock.patch("mediflow.INGEST_BYTES", 2048):
+            first = self.get("/datasets/frozen-text/records", offset="70")
+            self.assertEqual(first["availability"]["reason"], "metadata_indexing_in_progress")
+            indexed = self.bridge._db.execute("SELECT count FROM mf_metadata_state").fetchone()[0]
+            self.assertGreater(indexed, 0)
+            self.assertLess(indexed, 80)
+            self.bridge.close()
+            self.bridge = MediflowBridge(self.root, self.dbpath)
+            for _ in range(80):
+                page = self.get("/datasets/frozen-text/records", offset="70")
+                if page["availability"]["available"]:
+                    break
+            self.assertTrue(page["availability"]["available"])
+            self.assertEqual(len(page["records"]), 10)
+            self.assertEqual(page["records"][0]["sample_id"], "sample-70")
+            self.assertEqual(self.bridge._db.execute("SELECT count(*) FROM mf_metadata").fetchone()[0], 80)
+
+    def test_invalid_metadata_after_valid_prefix_stays_unavailable(self):
+        directory, m = self.dataset(2, expected_hash=False)
+        (directory / "records.metadata.jsonl").write_text('{"sample_id":"valid"}\nnot-json\n')
+        first = self.get("/datasets/frozen-text/records")
+        second = self.get("/datasets/frozen-text/records")
+        self.assertEqual(first["records"], [])
+        self.assertEqual(second["availability"]["reason"], "invalid_metadata_index")
+
+    def test_partial_truncation_detected_before_committed_offset_changes(self):
+        self.append([step(1)])
+        with (self.attempt / "steps.jsonl").open("a") as f:
+            f.write(" " * 100)
+        rid = self.rid()
+        before = self.get("/runs/" + rid + "/steps")
+        source = self.attempt / "steps.jsonl"
+        with source.open("r+b") as f:
+            f.truncate(source.stat().st_size - 50)
+        self.assert_error("cursor_reset", lambda: self.get("/runs/" + rid + "/steps", stream_epoch=before["stream_epoch"]), 409)
+
+    def test_oversize_stream_and_snapshot_fail_closed(self):
+        with mock.patch("mediflow.MAX_LINE_BYTES", 100):
+            self.append([step(1)])
+            rid = self.rid()
+            self.assertFalse(self.get("/runs/" + rid + "/steps")["telemetry_complete"])
+            self.assertIn("stream_line_limit", self.get("/health")["errors"])
+        # A large unrelated field cannot bypass the snapshot safety budget.
+        dump(self.attempt / "summary.json", {"private_raw": "X" * 300})
+        with mock.patch("mediflow.MAX_SNAPSHOT_BYTES", 250):
+            self.assertIn("snapshot_unavailable", self.get("/health")["errors"])
+
     def test_threaded_read_model_requests(self):
         self.append([step(i) for i in range(1, 25)])
         failures = []

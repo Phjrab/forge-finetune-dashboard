@@ -43,7 +43,7 @@ Dataset manifests are discovered at `<root>/datasets/<safe-id>/manifest.json`.
 Discovery runs on polling requests, so future manifests appear without a bridge
 restart. Snapshot stat signatures cache unchanged sanitized JSON. Missing or
 unsafe manifests immediately remove cached listings. IDs never interpolate a
-browser-supplied path. `mf-` IDs are the first24 hex characters of SHA256 over
+browser-supplied path. `mf-` IDs are the first 24 hex characters of SHA256 over
 canonical JSON `[campaign_id,job_id,run_id,attempt_id]`.
 
 Each stream has a separate durable offset, producer, sequence index and epoch.
@@ -58,12 +58,12 @@ The client saves separate `(after_seq,stream_epoch)` values for steps, resources
 and events. Epochs survive a normal bridge restart. Inode replacement, truncation,
 source removal, or a changed suffix at the committed boundary invalidate the
 stream cache. An incompatible epoch or cursor beyond the stream returns
-`mediflow_cursor_reset` HTTP409. Clear only that chart/cursor and request from0
+`mediflow_cursor_reset` HTTP409. Clear only that chart/cursor and request from 0
 without an epoch. Raw source files are untouched. Same-inode rewrites that change
 only an old prefix while preserving size and the committed boundary are outside
 append-only producer semantics; producers must rotate files for replacement.
 
-Only a running live attempt becomes stale after30 seconds without a timestamped
+Only a running live attempt becomes stale after 30 seconds without a timestamped
 update; terminal/historical records do not become stale merely with age. Missing
 or unknown loss stays null, and training/reload/evaluation success remain separate.
 Campaign completion counts distinct verified first-seed condition job IDs rather
@@ -71,15 +71,16 @@ than attempts, smoke jobs or evaluation jobs.
 
 ## Bounded resources and immutable references
 
-Ordinary pages default to100 records, maximum500. Stream pages default to500,
-maximum1000. These bound response sizes, not source row counts. The bridge handles
-sources larger than1000 rows and128KiB without passing them through Forge's old
-JSONL text import. Stream ingestion processes at most8MiB per stream/request;
+Ordinary pages default to 100 records, maximum 500. Stream pages default to 500,
+maximum 1000. These bound response sizes, not source row counts. The bridge handles
+sources larger than 1000 rows and 128KiB without passing them through Forge's old
+JSONL text import. Stream ingestion processes at most 8MiB per stream/request;
 remaining rows continue on subsequent polling requests. Individual source lines
-are limited to1MiB and JSON snapshots to8MiB as explicit disk/memory safety
+are limited to 1MiB and JSON snapshots to 8MiB as explicit disk/memory safety
 limits. Oversize or invalid input yields sanitized health/integrity diagnostics.
 No medical input or exception traceback is echoed.
 
+Canonical group dictionaries, restriction flags and license URLs remain intact.
 Dataset listing and registration use manifest counts and hashes without scanning
 canonical data or a metadata index. Optional metadata must use the fixed filename
 `records.metadata.jsonl`; every directory/file open uses no-follow descriptors.
@@ -87,7 +88,7 @@ Symlinks, traversal and arbitrary browser paths are rejected, including concurre
 symlink replacement at open time.
 
 The first metadata request incrementally builds a persisted row-offset index,
-reading at most8MiB per request. Until indexing is complete it returns empty rows
+reading at most 8MiB per request. Until indexing is complete it returns empty rows
 with `availability.reason=metadata_indexing_in_progress`; retry the same request.
 Before serving rows, the bridge verifies row count and the declared metadata hash
 when present. Subsequent pages seek directly using SQLite offsets; unchanged
@@ -112,8 +113,8 @@ recomputed. Unknown raw fields are discarded before caching or export.
 python3 -m unittest discover -s tests -p test_mediflow.py -v
 ```
 
-Tests generate safe fixtures in temporary directories. They cover1505 stream
-rows and2207 metadata rows, sources over128KiB, durable restart cursors, partial
+Tests generate safe fixtures in temporary directories. They cover 1505 stream
+rows and 2207 metadata rows, sources over 128KiB, durable restart cursors, partial
 lines, idempotency/conflicts, file replacement/truncation/removal, unavailable
 sensors, finite/null semantics, namespace isolation, stale/historical status,
 first-seed counts, future discovery, pagination, frozen reference registration,

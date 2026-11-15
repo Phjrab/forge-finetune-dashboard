@@ -19,6 +19,7 @@ import sqlite3
 import stat
 import threading
 import time
+from urllib.parse import urlsplit
 
 from simulator import DashboardError
 
@@ -69,6 +70,40 @@ def _label(value, limit=200):
     if re.search(r"(?i)(?:/home/|/tmp/|/mnt/|/root/|[a-z]:[/\\]|bearer\s|(?:token|password|secret|api_key)\s*[:=])", value):
         return None
     return value
+
+
+def _reference(value):
+    """Public license/identifier URLs are provenance, not local file paths."""
+    label = _label(value, 2048)
+    if label is not None:
+        return label
+    if not isinstance(value, str) or len(value) > 2048 or any(ord(c) < 32 for c in value) or any(c in value for c in "<>\\"):
+        return None
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+            return None
+        host = parsed.hostname.lower()
+        if host in {"localhost", "127.0.0.1", "::1"} or host.endswith((".local", ".internal")):
+            return None
+        if re.search(r"(?i)(?:password|token|api_key|secret)=|%0[ad]", value):
+            return None
+        return value
+    except ValueError:
+        return None
+
+
+def _groups(value):
+    if isinstance(value, dict):
+        return {k: _reference(value[k]) for k in ("patient", "study", "document", "image", "parent", "duplicate_cluster") if k in value}
+    return _labels(value)
+
+
+def _restrictions(value):
+    if isinstance(value, dict):
+        keys = ("raw_redistribution", "research_only", "sft_allowed", "dataset_license", "attribution_required")
+        return {k: value[k] if isinstance(value[k], bool) else _label(value[k]) for k in keys if k in value}
+    return _labels(value) if isinstance(value, list) else _label(value)
 
 
 def _reason(value):
@@ -308,7 +343,9 @@ def _evaluation(value):
     def subgroup(v):
         if not isinstance(v, dict):
             return None
-        r = {k: _label(v.get(k)) for k in ("label", "group", "subgroup", "modality", "image_ablation", "task", "name") if k in v}
+        r = {k: _label(v.get(k)) for k in ("label", "group", "subgroup", "modality", "image_ablation", "task", "name", "source_id", "dimension", "value") if k in v}
+        if not r.get("label") and r.get("value"):
+            r["label"] = r["value"]
         r["metrics"] = _metrics(v.get("metrics", v))
         for k in ("scheduled", "attempted", "valid", "invalid", "failed", "unattempted"):
             if k in v:
@@ -333,7 +370,7 @@ def _dataset(value, catalog_id):
         if not isinstance(v, dict):
             return None
         return {"source_id": _label(v.get("source_id")), "source_revision": _label(v.get("source_revision")),
-                "license_ref": _label(v.get("license_ref")), "restrictions": _labels(v.get("restrictions")) if isinstance(v.get("restrictions"), list) else _label(v.get("restrictions"))}
+                "license_ref": _reference(v.get("license_ref")), "restrictions": _restrictions(v.get("restrictions"))}
     splits = value.get("split_counts") if isinstance(value.get("split_counts"), dict) else {}
     return {"schema_version": DATA_SCHEMA, "dataset_id": catalog_id, "name": _label(value.get("name")),
             "freeze_id": _label(value.get("freeze_id")), "data_hash": value["data_hash"], "record_count": count,
@@ -347,9 +384,10 @@ def _metadata(value):
     if not isinstance(value, dict):
         raise _error("invalid_metadata")
     out = {k: _label(value.get(k)) for k in ("sample_id", "source_id", "source_revision", "task_type", "language", "license_ref", "review_status", "freeze_id")}
-    out.update(group_ids=_labels(value.get("group_ids")), split=value.get("split") if value.get("split") in {"train", "validation", "test"} else None,
+    out["license_ref"] = _reference(value.get("license_ref"))
+    out.update(group_ids=_groups(value.get("group_ids")), split=value.get("split") if value.get("split") in {"train", "validation", "test"} else None,
                image_sha256=_hash(value.get("image_sha256")),
-               restrictions=_labels(value.get("restrictions")) if isinstance(value.get("restrictions"), list) else _label(value.get("restrictions")))
+               restrictions=_restrictions(value.get("restrictions")))
     # Derivation is structured provenance, never arbitrary raw fields.
     d = value.get("derivation")
     out["derivation"] = {k: _label(d.get(k)) for k in ("method", "version", "parent_sample_id", "review_status") if k in d} if isinstance(d, dict) else _label(d)
@@ -730,7 +768,7 @@ class MediflowBridge:
             for cid in sorted({r["campaign_id"] for r in runs}):
                 subset = [r for r in runs if r["campaign_id"] == cid]
                 # Count unique successful first-seed jobs, not attempts or smoke/eval.
-                done = {r["job_id"] for r in subset if re.search(r"first[-_]seed[-_](?:T[1-6]|V[1-4])$", r["job_id"], re.I) and r["training_succeeded"] is True and r["reload_succeeded"] is True}
+                done = {r["job_id"] for r in subset if re.fullmatch(r"v6-first-seed-(?:T[1-6]|V[1-4])", r["job_id"]) and r["training_succeeded"] is True and r["reload_succeeded"] is True}
                 campaigns.append({"campaign_id": cid, "run_count": len(subset), "status_counts": dict(Counter(r["status"] for r in subset)),
                                   "first_seed_completed": len(done), "first_seed_expected": 10,
                                   "last_emitted_at": max((r["last_emitted_at"] for r in subset if r["last_emitted_at"]), default=None)})
