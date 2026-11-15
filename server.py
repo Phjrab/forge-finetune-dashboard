@@ -361,7 +361,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _snapshot(self):
         snapshot = self.server.simulator.snapshot()
         snapshot["settings"] = self._settings()
-        if self.server.mediflow is not None:
+        if getattr(self.server, "mediflow", None) is not None:
             caps = self.server.mediflow.capabilities()
             snapshot.update(mode="mediflow", source="external_mediflow", demo=False,
                             runs=[], active_run_id=None, reserved_run_id=None,
@@ -410,14 +410,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return self.server.model_downloads
 
     def _training(self):
-        if self.server.mediflow is not None:
+        if getattr(self.server, "mediflow", None) is not None:
             raise DashboardError('mediflow_execution_owned', 'Execution is owned by the Mediflow supervisor.', 409)
         if not self.server.training:
             raise DashboardError('training_unavailable','Real training is disabled on this server.',409)
         return self.server.training
 
     def _mediflow_get(self, path):
-        if self.server.mediflow is None:
+        if getattr(self.server, "mediflow", None) is None:
             raise DashboardError("mediflow_unavailable", "Mediflow backend is not configured.", 409)
         query = self._query({"offset", "limit", "campaign_id", "after_seq", "stream_epoch", "format"})
         result = self.server.mediflow.dispatch("GET", path, query=query)
@@ -607,11 +607,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.server.auth.update_settings(payload)
                 return self._json(200, self._settings())
             if path.startswith("/api/mediflow/"):
-                if self.server.mediflow is None:
+                if getattr(self.server, "mediflow", None) is None:
                     raise DashboardError("mediflow_unavailable", "Mediflow backend is not configured.", 409)
                 result = self.server.mediflow.dispatch("POST", path, payload=payload)
                 return self._json(201, result if self._can_view_response() else {"registered": True})
-            if self.server.mediflow is not None:
+            if getattr(self.server, "mediflow", None) is not None:
                 raise DashboardError("mediflow_execution_owned",
                                      "This profile uses Mediflow. Dataset freeze and execution belong to TRAINING_OWNER.", 409)
             if path == '/api/huggingface/connect':

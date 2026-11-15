@@ -186,5 +186,13 @@ async function renderMediflowDatasets(){
   $$('[data-mf-metadata]').forEach(button=>button.onclick=()=>loadMediflowMetadata(button.dataset.mfMetadata,0));
 }
 async function loadMediflowMetadata(id,offset){
-  try{const result=await api(`/api/mediflow/datasets/${encodeURIComponent(id)}/records?offset=${offset}&limit=100`);if(nav!=='datasets')return;$('#mf-metadata').innerHTML=`<h3>${escapeHtml(id)} · ${offset} / ${escapeHtml(mfValue(result.total))}</h3><p>${escapeHtml(result.availability?.reason||'')}</p>${mfAggregateTable({records:result.records})}<button id="mf-metadata-prev" class="button secondary" ${offset===0?'disabled':''}>${t('Previous')}</button><button id="mf-metadata-next" class="button secondary" ${result.has_more?'':'disabled'}>${t('Next')}</button>`;$('#mf-metadata-prev').onclick=()=>loadMediflowMetadata(id,Math.max(0,offset-100));$('#mf-metadata-next').onclick=()=>loadMediflowMetadata(id,offset+100);}catch(error){toast(error.message,true);}
+  try{
+    const result=await api(`/api/mediflow/datasets/${encodeURIComponent(id)}/records?offset=${offset}&limit=100`);
+    if(nav!=='datasets')return;
+    const indexing=result.availability?.reason==='metadata_indexing_in_progress';
+    $('#mf-metadata').innerHTML=`<h3>${escapeHtml(id)} · ${offset} / ${escapeHtml(mfValue(result.total))}</h3><p>${escapeHtml(result.availability?.reason||'')}</p>${mfAggregateTable({records:result.records})}<button id="mf-metadata-prev" class="button secondary" ${offset===0||indexing?'disabled':''}>${t('Previous')}</button><button id="mf-metadata-next" class="button secondary" ${result.has_more&&!indexing?'':'disabled'}>${t('Next')}</button>${indexing?`<button id="mf-metadata-retry" class="button secondary">${t('Retry')}</button>`:''}`;
+    $('#mf-metadata-prev').onclick=()=>loadMediflowMetadata(id,Math.max(0,offset-100));
+    $('#mf-metadata-next').onclick=()=>loadMediflowMetadata(id,offset+100);
+    if(indexing)$('#mf-metadata-retry').onclick=()=>loadMediflowMetadata(id,offset);
+  }catch(error){toast(error.message,true);}
 }
