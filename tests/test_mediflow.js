@@ -72,6 +72,21 @@ const step=(seq,value)=>({seq,optimizer_step:seq,train_loss:value,lr_used:null,p
   assert.equal(get('.workspace small').textContent,'MediFlow · external engine');assert.equal(get('footer span').textContent,'MediFlow · external engine');
   const campaignOptions=get('#mf-campaign-select').innerHTML;run('render()');assert.equal(get('#mf-campaign-select').innerHTML,campaignOptions);
   run("I18n.setLanguage('ko');render()");assert.equal(get('#mf-campaign-label').textContent,'캠페인');assert.match(get('footer span').textContent,/외부 엔진/);run("I18n.setLanguage('en')");
+  const imageIdentity={...identity,image_condition:'image',renderer_version:'native-v1'};
+  assert.equal(run(`mfComparability(${JSON.stringify(imageIdentity)},{...${JSON.stringify(imageIdentity)},image_condition:'noimage'})`),'Different evaluation cohort');
+  assert.equal(run(`mfComparability(${JSON.stringify(imageIdentity)},{...${JSON.stringify(imageIdentity)},renderer_version:'native-v2'})`),'Different evaluation cohort');
+  assert.equal(run(`mfComparability(${JSON.stringify(imageIdentity)},${JSON.stringify(identity)})`),'Comparison identity unknown');
+  assert.equal(run(`mfComparability(${JSON.stringify(imageIdentity)},${JSON.stringify(imageIdentity)})`),'Matching evaluation cohort');
+  const conditionHTML=run(`renderMediflowEvaluations([{...${JSON.stringify(evaluation)},image_condition:'noimage',renderer_version:'native-v1'}])`);assert.match(conditionHTML,/Image condition<\/dt><dd>noimage/);assert.match(conditionHTML,/Renderer version<\/dt><dd>native-v1/);
+  // Reference registration is persisted separately from manifest verification.
+  run("nav='datasets';mediflow.list=async()=>[{dataset_id:'registered-data',name:'Dataset',status:'verified',registered:true,record_count:12},{dataset_id:'unregistered-data',name:'Dataset',status:'verified',registered:false,record_count:12}]");
+  await run('renderMediflowDatasets()');
+  assert.match(get('#workspace-view').innerHTML,/Reference registration<\/dt><dd>Registered/);
+  assert.match(get('#workspace-view').innerHTML,/Status<\/dt><dd>verified/);
+  assert.match(get('#workspace-view').innerHTML,/data-mf-register="registered-data" disabled>Registered immutable reference/);
+  assert.match(get('#workspace-view').innerHTML,/data-mf-register="unregistered-data" >Register immutable reference/);
+  assert.match(get('#workspace-view').innerHTML,/Reference registration<\/dt><dd>Not registered/);
+  run("I18n.setLanguage('ko')");await run('renderMediflowDatasets()');assert.match(get('#workspace-view').innerHTML,/불변 참조 등록됨/);assert.match(get('#workspace-view').innerHTML,/참조 등록/);run("I18n.setLanguage('en')");
   assert.match(fs.readFileSync('static/app.js','utf8'),/setInterval\(refresh,3000\)/);assert.match(fs.readFileSync('static/index.html','utf8'),/src="\/mediflow.js"/);
   console.log('PASS MediFlow independent cursors, replay/dedupe, rotation/reset, reconnect, registry pages, empty hydration, history/null/XSS, evaluation denominators/cohorts, KO/EN and legacy launch guards (CPU DOM stubs only).');
 })().catch(error=>{console.error(error);process.exitCode=1;});

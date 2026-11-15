@@ -4,6 +4,12 @@
 // change API identifiers, dataset records, run names, logs or exported JSON.
 const I18n = (() => {
   const korean = {
+    "Image condition":"이미지 조건",
+    "Renderer version":"렌더러 버전",
+    "Reference registration":"참조 등록",
+    "Registered":"등록됨",
+    "Not registered":"등록되지 않음",
+    "Registered immutable reference":"불변 참조 등록됨",
     "Campaign":"캠페인",
     "All campaigns":"모든 캠페인",
     "Live runs first · historical records with loss first":"실시간 실행 우선 · 손실이 있는 과거 기록 우선",
